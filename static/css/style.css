@@ -413,6 +413,11 @@ input[type="range"]::-moz-range-thumb {
   color: var(--text);
   cursor: pointer;
 }
+.solvent-custom {
+  margin-top: 8px;
+  cursor: text;
+}
+
 .column-select:focus {
   outline: none;
   border-color: var(--teal-dim);

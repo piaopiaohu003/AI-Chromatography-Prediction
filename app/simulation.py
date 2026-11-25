@@ -91,6 +91,72 @@ def _aqueous_viscosity(conditions: Conditions) -> float:
     if key == "custom":
         return PHASE_PROPS[conditions.phase]["base_visc"]
     return AQUEOUS_PROPS[key]["visc"]
+
+
+# Relative elution strength of auxiliary solvents (1.0 = primary modifier).
+MODIFIER_STRENGTH = {
+    "reversed": {
+        "ACN": 1.00, "MeOH": 0.86, "THF": 1.30, "EtOH": 0.76,
+        "IPA": 0.98, "EtOAc": 1.12,
+    },
+    "normal": {
+        "IPA": 1.00, "EtOAc": 0.88, "THF": 1.22, "EtOH": 1.01,
+        "MeOH": 1.25, "ACN": 1.12,
+    },
+}
+
+
+def _channel_key(value: str, phase: str):
+    if value in ("none", "", None):
+        return None
+    if value == "custom":
+        return "IPA" if phase == "normal" else "ACN"
+    return value
+
+
+def _channel_viscosity(key, phase: str) -> float:
+    if key is None:
+        return 0.0
+    if key in ORGANIC_PROPS:
+        return ORGANIC_PROPS[key]["visc"]
+    return AQUEOUS_PROPS.get(key, {"visc": PHASE_PROPS[phase]["base_visc"]})["visc"]
+
+
+def _aux_label(value: str, custom_label: Optional[str]) -> str:
+    if value == "custom":
+        return (custom_label or "").strip() or "自定义溶剂"
+    if value in ORGANIC_PROPS:
+        return ORGANIC_PROPS[value]["label"]
+    return AQUEOUS_PROPS.get(value, {}).get("label", value)
+
+
+def _channel_strength(key, phase: str) -> float:
+    if key is None or key not in MODIFIER_STRENGTH[phase]:
+        return 0.0
+    return MODIFIER_STRENGTH[phase][key]
+
+
+def _modifier_phi(
+    percent_b: float, percent_c: float, percent_d: float, conditions: Conditions
+) -> float:
+    """Effective modifier fraction of the quaternary mobile phase."""
+    phase = conditions.phase
+    fractions = [
+        (max(percent_b, 0.0) / 100.0, _channel_strength(_organic_key(conditions), phase)),
+        (
+            max(percent_c, 0.0) / 100.0,
+            _channel_strength(_channel_key(conditions.solvent_c, phase), phase),
+        ),
+        (
+            max(percent_d, 0.0) / 100.0,
+            _channel_strength(_channel_key(conditions.solvent_d, phase), phase),
+        ),
+    ]
+    total = sum(fraction for fraction, _ in fractions)
+    scale = 1.0 if total <= 1.0 else 1.0 / total
+    return sum(fraction * strength for fraction, strength in fractions) * scale
+
+
 NP_REF_PHI = 0.10  # normal-phase reference: 10% polar modifier
 RESPONSE_SCALE = 6.0  # mAU*min per ug of injected mass at full absorptivity
 TAIL_RATIO = 0.18
@@ -238,11 +304,17 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
         program_end = max(p.time_min for p in conditions.gradient) if conditions.gradient else 20.0
         run_time = max(program_end * 1.35, program_end + 6.0)
     else:
-        phi_iso = conditions.percent_b / 100.0
+        phi_iso = _modifier_phi(
+            conditions.percent_b, conditions.percent_c, conditions.percent_d, conditions
+        )
         k_values = 10.0 ** np.clip(log_k0 - s_values * phi_iso, -6.0, 8.0)
         run_time = min(240.0, max(10.0, t0 * (1.0 + float(np.max(k_values))) * 1.1 + 2.0))
 
     grad_t, grad_b = _gradient_arrays(conditions, flow, run_time)
+    grad_phi = np.asarray([
+        _modifier_phi(float(pb), conditions.percent_c, conditions.percent_d, conditions)
+        for pb in grad_b
+    ])
     dwell_t = conditions.dwell_volume_ml / flow if flow > 0 else 0.0
     if conditions.mode == "gradient" and conditions.gradient:
         program_end = float(max(p.time_min for p in conditions.gradient))
@@ -261,7 +333,7 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
     while t < run_time - 1e-9:
         shifted = t - dwell_t - x / u
         percent = np.interp(shifted, grad_t, grad_b)
-        phi = percent / 100.0
+        phi = np.interp(shifted, grad_t, grad_phi)
         k = 10.0 ** np.clip(log_k0 - s_values * phi, -9.0, 9.0)
         velocity = u / (1.0 + k)  # mm/min
         next_x = x + velocity * dt
@@ -276,9 +348,8 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
     # Composition seen by each solute at the column outlet
     outlet_time = tr - dwell_t - length / u
     outlet_percent = np.interp(np.nan_to_num(outlet_time, nan=0.0), grad_t, grad_b)
-    k_elution = 10.0 ** np.clip(
-        log_k0 - s_values * (outlet_percent / 100.0), -9.0, 9.0
-    )
+    outlet_phi = np.interp(np.nan_to_num(outlet_time, nan=0.0), grad_t, grad_phi)
+    k_elution = 10.0 ** np.clip(log_k0 - s_values * outlet_phi, -9.0, 9.0)
 
     # --- peak profile -----------------------------------------------------
     eps_rel = np.array([_eps_rel(c, conditions.wavelength_nm) for c in compounds])
@@ -378,9 +449,20 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
         resolutions.append(rs)
 
     # --- pressure & warnings ---------------------------------------------
-    mean_phi = float(np.mean(composition)) / 100.0
+    mean_b = float(np.mean(composition)) / 100.0
     base_visc = _aqueous_viscosity(conditions)
-    eta = base_visc + mean_phi * (ORGANIC_PROPS[organic_key]["visc"] - base_visc)
+    c_key = _channel_key(conditions.solvent_c, conditions.phase)
+    d_key = _channel_key(conditions.solvent_d, conditions.phase)
+    frac_c = conditions.percent_c / 100.0 if c_key else 0.0
+    frac_d = conditions.percent_d / 100.0 if d_key else 0.0
+    frac_a = max(0.0, 1.0 - mean_b - frac_c - frac_d)
+    mix = [(frac_a, base_visc), (mean_b, ORGANIC_PROPS[organic_key]["visc"])]
+    if c_key:
+        mix.append((frac_c, _channel_viscosity(c_key, conditions.phase)))
+    if d_key:
+        mix.append((frac_d, _channel_viscosity(d_key, conditions.phase)))
+    total_frac = sum(weight for weight, _ in mix) or 1.0
+    eta = sum(weight * visc for weight, visc in mix) / total_frac
     eta *= max(0.4, 1.0 - 0.021 * (conditions.temperature_c - 25.0))
     pressure_bar = 1600.0 * eta * column.length_mm * (u / 60.0) / (dp_mm ** 2) / 1e5
 
@@ -454,6 +536,32 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
             + ("异丙醇" if phase == "normal" else "乙腈")
             + "的物性与洗脱强度估算。"
         )
+    max_b = (
+        max((p.percent_b for p in conditions.gradient), default=conditions.percent_b)
+        if conditions.mode == "gradient"
+        else conditions.percent_b
+    )
+    if max_b + conditions.percent_c + conditions.percent_d > 100.5:
+        warnings.append(
+            "B/C/D 相比例合计超过 100%，计算时已按比例归一化，请检查泵程序设置。"
+        )
+    for slot, value, label in (
+        ("C", conditions.solvent_c, conditions.solvent_c_label),
+        ("D", conditions.solvent_d, conditions.solvent_d_label),
+    ):
+        if value == "none":
+            continue
+        if value == "custom":
+            warnings.append(
+                f"自定义辅助相 {slot}「{_aux_label(value, label)}」按"
+                + ("异丙醇" if phase == "normal" else "乙腈")
+                + "的物性与洗脱强度估算。"
+            )
+            continue
+        if phase == "reversed" and value in HEXANE_FAMILY:
+            warnings.append(f"反相模式下辅助相 {slot} 为烷烃，可能与水相不互溶。")
+        if phase == "normal" and value in AQUEOUS_FAMILY:
+            warnings.append(f"正相模式下辅助相 {slot} 为水相，可能与正己烷体系不兼容。")
     pressure_limit = 1000.0 if column.particle_um <= 2.5 else 400.0
     if pressure_bar > pressure_limit:
         warnings.append(
@@ -480,6 +588,12 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
         "organic_label": _organic_label(conditions),
         "aqueous": conditions.aqueous,
         "aqueous_label": _aqueous_label(conditions),
+        "solvent_c": conditions.solvent_c,
+        "solvent_c_label": _aux_label(conditions.solvent_c, conditions.solvent_c_label),
+        "percent_c": float(conditions.percent_c),
+        "solvent_d": conditions.solvent_d,
+        "solvent_d_label": _aux_label(conditions.solvent_d, conditions.solvent_d_label),
+        "percent_d": float(conditions.percent_d),
         "mode": conditions.mode,
         "phase": phase,
         "chemistry": column.chemistry,

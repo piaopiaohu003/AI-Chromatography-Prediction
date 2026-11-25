@@ -15,6 +15,12 @@ const DEFAULT_CONDITIONS = () => ({
   aqueous: "auto",
   aqueous_label: null,
   percent_b: 50,
+  solvent_c: "none",
+  solvent_c_label: null,
+  percent_c: 0,
+  solvent_d: "none",
+  solvent_d_label: null,
+  percent_d: 0,
   gradient: [
     { time_min: 0, percent_b: 5 },
     { time_min: 20, percent_b: 95 },
@@ -1023,6 +1029,32 @@ function bindSimControls() {
     scheduleSim(350);
   });
 
+  [["c", "C"], ["d", "D"]].forEach(([slot]) => {
+    $(`#solvent-${slot}`).addEventListener("change", (event) => {
+      state.conditions[`solvent_${slot}`] = event.target.value;
+      syncAuxFields();
+      if (event.target.value === "custom") {
+        setTimeout(() => $(`#solvent-${slot}-custom`).focus(), 0);
+      }
+      persist();
+      scheduleSim();
+    });
+    $(`#solvent-${slot}-custom`).addEventListener("input", (event) => {
+      state.conditions[`solvent_${slot}_label`] = event.target.value;
+      syncAuxFields();
+      persist();
+      scheduleSim(350);
+    });
+    $(`#percent-${slot}`).addEventListener("input", (event) => {
+      const value = parseFloat(event.target.value);
+      if (!Number.isFinite(value)) return;
+      state.conditions[`percent_${slot}`] = value;
+      syncAuxFields();
+      persist();
+      scheduleSim();
+    });
+  });
+
   $("#iso-slider").addEventListener("input", (event) => {
     state.conditions.percent_b = parseFloat(event.target.value);
     $("#iso-out").textContent = `${Math.round(state.conditions.percent_b)}%`;
@@ -1203,6 +1235,68 @@ const AQUEOUS_NAMES = {
   cyclohexane: "环己烷",
 };
 
+const AUX_SOLVENT_OPTIONS = [
+  { value: "none", label: "未启用" },
+  { value: "ACN", label: "乙腈 ACN" },
+  { value: "MeOH", label: "甲醇 MeOH" },
+  { value: "THF", label: "四氢呋喃 THF" },
+  { value: "EtOH", label: "乙醇 EtOH" },
+  { value: "IPA", label: "异丙醇 IPA" },
+  { value: "EtOAc", label: "乙酸乙酯 EtOAc" },
+  { value: "water", label: "水" },
+  { value: "buffer", label: "缓冲水相" },
+  { value: "hexane", label: "正己烷" },
+  { value: "heptane", label: "正庚烷" },
+  { value: "cyclohexane", label: "环己烷" },
+  { value: "custom", label: "自定义" },
+];
+
+function renderAuxSolventOptions(selectId, value) {
+  const select = $(selectId);
+  if (!select) return;
+  select.innerHTML = AUX_SOLVENT_OPTIONS
+    .map((item) => `<option value="${item.value}">${item.label}</option>`)
+    .join("");
+  select.value = AUX_SOLVENT_OPTIONS.some((item) => item.value === value) ? value : "none";
+}
+
+function syncAuxFields() {
+  const conditions = state.conditions;
+  [["c", "C"], ["d", "D"]].forEach(([slot]) => {
+    const value = conditions[`solvent_${slot}`] || "none";
+    const select = $(`#solvent-${slot}`);
+    if (select) select.value = value;
+    const custom = $(`#solvent-${slot}-custom`);
+    const isCustom = value === "custom";
+    if (custom) {
+      custom.classList.toggle("hidden", !isCustom);
+      if (isCustom && document.activeElement !== custom) {
+        custom.value = conditions[`solvent_${slot}_label`] || "";
+      }
+    }
+    const percent = conditions[`percent_${slot}`] || 0;
+    const slider = $(`#percent-${slot}`);
+    if (slider) {
+      slider.value = String(percent);
+      slider.disabled = value === "none";
+    }
+    const out = $(`#solvent-${slot}-out`);
+    if (out) {
+      if (value === "none") {
+        out.textContent = "未启用";
+      } else {
+        const label = solventLabel(
+          value,
+          conditions[`solvent_${slot}_label`],
+          { ...ORGANIC_NAMES, ...AQUEOUS_NAMES },
+          "自定义溶剂",
+        );
+        out.textContent = `${Math.round(percent)}% · ${label}`;
+      }
+    }
+  });
+}
+
 function solventLabel(value, customLabel, names, fallback) {
   if (value === "custom") return (customLabel || "").trim() || fallback;
   if (value === "auto") return fallback || "自动";
@@ -1295,6 +1389,9 @@ function syncPhaseUI() {
   renderAqueousOptions();
   renderOrganicOptions();
   syncSolventCustomFields();
+  renderAuxSolventOptions("#solvent-c", state.conditions.solvent_c);
+  renderAuxSolventOptions("#solvent-d", state.conditions.solvent_d);
+  syncAuxFields();
   renderAiOrganicOptions();
   renderColumnOptions();
   syncColumnSelector();
@@ -1419,6 +1516,10 @@ function updateOutputs() {
 
 function applyPreset(name) {
   const conditions = state.conditions;
+  conditions.solvent_c = "none";
+  conditions.percent_c = 0;
+  conditions.solvent_d = "none";
+  conditions.percent_d = 0;
   if ((conditions.phase || "reversed") === "normal") {
     const presets = {
       screen: {
@@ -1629,9 +1730,21 @@ async function runSimulation() {
       ORGANIC_NAMES,
       normal ? "异丙醇" : "乙腈",
     );
+    const auxNote = ["c", "d"]
+      .filter((slot) => state.conditions[`solvent_${slot}`] !== "none")
+      .map((slot) => {
+        const label = solventLabel(
+          state.conditions[`solvent_${slot}`],
+          state.conditions[`solvent_${slot}_label`],
+          { ...ORGANIC_NAMES, ...AQUEOUS_NAMES },
+          "自定义",
+        );
+        return ` + ${slot.toUpperCase()} ${Math.round(state.conditions[`percent_${slot}`] || 0)}% ${label}`;
+      })
+      .join("");
     const mobileNote = normal
-      ? `${aqueousLabel}/${organicLabel}`
-      : `${aqueousLabel}/${organicLabel} · pH ${Number(state.conditions.ph).toFixed(1)}`;
+      ? `${aqueousLabel}/${organicLabel}${auxNote}`
+      : `${aqueousLabel}/${organicLabel}${auxNote} · pH ${Number(state.conditions.ph).toFixed(1)}`;
     $("#chart-sub").textContent =
       `${result.peaks.length} 个组分 · ${gradient ? "梯度" : "等度"} · `
       + `${mobileNote} · λ ${Math.round(state.conditions.wavelength_nm)} nm · `

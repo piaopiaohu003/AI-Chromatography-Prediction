@@ -32,6 +32,18 @@ class Conditions(BaseModel):
     ] = "auto"
     aqueous_label: Optional[str] = Field(None, max_length=40)
     percent_b: float = Field(50.0, ge=0.0, le=100.0)
+    solvent_c: Literal[
+        "none", "ACN", "MeOH", "THF", "EtOH", "IPA", "EtOAc",
+        "water", "buffer", "hexane", "heptane", "cyclohexane", "custom",
+    ] = "none"
+    solvent_c_label: Optional[str] = Field(None, max_length=40)
+    percent_c: float = Field(0.0, ge=0.0, le=100.0)
+    solvent_d: Literal[
+        "none", "ACN", "MeOH", "THF", "EtOH", "IPA", "EtOAc",
+        "water", "buffer", "hexane", "heptane", "cyclohexane", "custom",
+    ] = "none"
+    solvent_d_label: Optional[str] = Field(None, max_length=40)
+    percent_d: float = Field(0.0, ge=0.0, le=100.0)
     gradient: List[GradientPoint] = Field(
         default_factory=lambda: [
             GradientPoint(time_min=0.0, percent_b=5.0),

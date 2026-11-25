@@ -75,6 +75,65 @@ function aqueousViscosity(conditions) {
   }
   return AQUEOUS_PROPS[key].visc;
 }
+
+// Relative elution strength of auxiliary solvents (1.0 = primary modifier).
+const MODIFIER_STRENGTH = {
+  reversed: {
+    ACN: 1.00, MeOH: 0.86, THF: 1.30, EtOH: 0.76, IPA: 0.98, EtOAc: 1.12,
+  },
+  normal: {
+    IPA: 1.00, EtOAc: 0.88, THF: 1.22, EtOH: 1.01, MeOH: 1.25, ACN: 1.12,
+  },
+};
+
+function channelKey(value, phase) {
+  if (!value || value === 'none') {
+    return null;
+  }
+  if (value === 'custom') {
+    return phase === 'normal' ? 'IPA' : 'ACN';
+  }
+  return value;
+}
+
+function channelViscosity(key, phase) {
+  if (!key) {
+    return 0.0;
+  }
+  if (ORGANIC_PROPS[key]) {
+    return ORGANIC_PROPS[key].visc;
+  }
+  return (AQUEOUS_PROPS[key] || { visc: PHASE_PROPS[phase].base_visc }).visc;
+}
+
+function auxLabel(value, customLabel) {
+  if (value === 'custom') {
+    return customLabel ? String(customLabel).trim() : '自定义溶剂';
+  }
+  if (ORGANIC_PROPS[value]) {
+    return ORGANIC_PROPS[value].label;
+  }
+  return (AQUEOUS_PROPS[value] || {}).label || value;
+}
+
+function channelStrength(key, phase) {
+  if (!key || MODIFIER_STRENGTH[phase][key] === undefined) {
+    return 0.0;
+  }
+  return MODIFIER_STRENGTH[phase][key];
+}
+
+function modifierPhi(percentB, percentC, percentD, conditions) {
+  const phase = conditions.phase;
+  const contributions = [
+    [Math.max(percentB, 0.0) / 100.0, channelStrength(organicKey(conditions), phase)],
+    [Math.max(percentC, 0.0) / 100.0, channelStrength(channelKey(conditions.solvent_c, phase), phase)],
+    [Math.max(percentD, 0.0) / 100.0, channelStrength(channelKey(conditions.solvent_d, phase), phase)],
+  ];
+  const total = contributions.reduce((sum, [fraction]) => sum + fraction, 0.0);
+  const scale = total <= 1.0 ? 1.0 : 1.0 / total;
+  return contributions.reduce((sum, [fraction, strength]) => sum + fraction * strength, 0.0) * scale;
+}
 const NP_REF_PHI = 0.10; // normal-phase reference: 10% polar modifier
 const RESPONSE_SCALE = 6.0; // mAU*min per ug of injected mass at full absorptivity
 const TAIL_RATIO = 0.18;
@@ -236,7 +295,7 @@ function simulate(compounds, conditions) {
       : 20.0;
     runTime = Math.max(programEnd * 1.35, programEnd + 6.0);
   } else {
-    const phiIso = conditions.percent_b / 100.0;
+    const phiIso = modifierPhi(conditions.percent_b, conditions.percent_c, conditions.percent_d, conditions);
     const kValues = logK0.map((lk, i) => Math.pow(10.0, clamp(lk - sArr[i] * phiIso, -6.0, 8.0)));
     runTime = Math.min(240.0, Math.max(10.0, t0 * (1.0 + maxOf(kValues)) * 1.1 + 2.0));
   }
@@ -244,6 +303,9 @@ function simulate(compounds, conditions) {
   const grad = gradientArrays(conditions, flow, runTime);
   const gradT = grad.times;
   const gradB = grad.percents;
+  const gradPhi = gradB.map((pb) => modifierPhi(
+    pb, conditions.percent_c, conditions.percent_d, conditions,
+  ));
   const dwellT = flow > 0 ? conditions.dwell_volume_ml / flow : 0.0;
   let programEnd;
   if (conditions.mode === 'gradient' && conditions.gradient.length) {
@@ -266,8 +328,7 @@ function simulate(compounds, conditions) {
     let allDone = true;
     for (let i = 0; i < n; i += 1) {
       const shifted = t - dwellT - x[i] / u;
-      const percent = interp(shifted, gradT, gradB);
-      const phi = percent / 100.0;
+      const phi = interp(shifted, gradT, gradPhi);
       const k = Math.pow(10.0, clamp(logK0[i] - sArr[i] * phi, -9.0, 9.0));
       const velocity = u / (1.0 + k); // mm/min
       const nextX = x[i] + velocity * dt;
@@ -291,7 +352,8 @@ function simulate(compounds, conditions) {
   for (let i = 0; i < n; i += 1) {
     const outletTime = Number.isNaN(tr[i]) ? 0.0 : tr[i] - dwellT - length / u;
     outletPercent[i] = interp(outletTime, gradT, gradB);
-    kElution[i] = Math.pow(10.0, clamp(logK0[i] - sArr[i] * (outletPercent[i] / 100.0), -9.0, 9.0));
+    const outletPhi = interp(outletTime, gradT, gradPhi);
+    kElution[i] = Math.pow(10.0, clamp(logK0[i] - sArr[i] * outletPhi, -9.0, 9.0));
   }
 
   // --- peak profile -----------------------------------------------------
@@ -422,9 +484,22 @@ function simulate(compounds, conditions) {
   }
 
   // --- pressure & warnings ---------------------------------------------
-  const meanPhi = mean(composition) / 100.0;
+  const meanB = mean(composition) / 100.0;
   const baseVisc = aqueousViscosity(conditions);
-  let eta = baseVisc + meanPhi * (ORGANIC_PROPS[organicKey(conditions)].visc - baseVisc);
+  const cKey = channelKey(conditions.solvent_c, conditions.phase);
+  const dKey = channelKey(conditions.solvent_d, conditions.phase);
+  const fracC = cKey ? conditions.percent_c / 100.0 : 0.0;
+  const fracD = dKey ? conditions.percent_d / 100.0 : 0.0;
+  const fracA = Math.max(0.0, 1.0 - meanB - fracC - fracD);
+  const mix = [[fracA, baseVisc], [meanB, ORGANIC_PROPS[organicKey(conditions)].visc]];
+  if (cKey) {
+    mix.push([fracC, channelViscosity(cKey, conditions.phase)]);
+  }
+  if (dKey) {
+    mix.push([fracD, channelViscosity(dKey, conditions.phase)]);
+  }
+  const totalFrac = mix.reduce((sum, [weight]) => sum + weight, 0.0) || 1.0;
+  let eta = mix.reduce((sum, [weight, visc]) => sum + weight * visc, 0.0) / totalFrac;
   eta *= Math.max(0.4, 1.0 - 0.021 * (conditions.temperature_c - 25.0));
   const pressureBar = 1600.0 * eta * column.length_mm * (u / 60.0) / Math.pow(dpMm, 2) / 1e5;
 
@@ -513,6 +588,33 @@ function simulate(compounds, conditions) {
       + (phase === 'normal' ? '异丙醇' : '乙腈') + '的物性与洗脱强度估算。',
     );
   }
+  const maxB = conditions.mode === 'gradient'
+    ? maxOf(conditions.gradient.map((p) => p.percent_b))
+    : conditions.percent_b;
+  if (maxB + conditions.percent_c + conditions.percent_d > 100.5) {
+    warnings.push('B/C/D 相比例合计超过 100%，计算时已按比例归一化，请检查泵程序设置。');
+  }
+  for (const [slot, value, label] of [
+    ['C', conditions.solvent_c, conditions.solvent_c_label],
+    ['D', conditions.solvent_d, conditions.solvent_d_label],
+  ]) {
+    if (!value || value === 'none') {
+      continue;
+    }
+    if (value === 'custom') {
+      warnings.push(
+        `自定义辅助相 ${slot}「${auxLabel(value, label)}」按`
+        + (phase === 'normal' ? '异丙醇' : '乙腈') + '的物性与洗脱强度估算。',
+      );
+      continue;
+    }
+    if (phase === 'reversed' && HEXANE_FAMILY.includes(value)) {
+      warnings.push(`反相模式下辅助相 ${slot} 为烷烃，可能与水相不互溶。`);
+    }
+    if (phase === 'normal' && AQUEOUS_FAMILY.includes(value)) {
+      warnings.push(`正相模式下辅助相 ${slot} 为水相，可能与正己烷体系不兼容。`);
+    }
+  }
   const pressureLimit = column.particle_um <= 2.5 ? 1000.0 : 400.0;
   if (pressureBar > pressureLimit) {
     warnings.push(
@@ -544,6 +646,12 @@ function simulate(compounds, conditions) {
     organic_label: organicLabel(conditions),
     aqueous: conditions.aqueous,
     aqueous_label: aqueousLabel(conditions),
+    solvent_c: conditions.solvent_c,
+    solvent_c_label: auxLabel(conditions.solvent_c, conditions.solvent_c_label),
+    percent_c: conditions.percent_c,
+    solvent_d: conditions.solvent_d,
+    solvent_d_label: auxLabel(conditions.solvent_d, conditions.solvent_d_label),
+    percent_d: conditions.percent_d,
     mode: conditions.mode,
     phase,
     chemistry: column.chemistry || 'c18',

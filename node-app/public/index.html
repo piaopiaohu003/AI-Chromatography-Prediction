@@ -164,6 +164,21 @@
           </div>
 
           <div class="field">
+            <div class="field-head"><label for="solvent-c">辅助相 C</label><output id="solvent-c-out">未启用</output></div>
+            <select id="solvent-c" class="column-select" aria-label="辅助相 C 溶剂"></select>
+            <input type="text" id="solvent-c-custom" class="column-select solvent-custom hidden" maxlength="40" placeholder="自定义 C 相名称">
+            <input type="range" id="percent-c" min="0" max="100" step="1" value="0" aria-label="C 相比例">
+          </div>
+
+          <div class="field">
+            <div class="field-head"><label for="solvent-d">辅助相 D</label><output id="solvent-d-out">未启用</output></div>
+            <select id="solvent-d" class="column-select" aria-label="辅助相 D 溶剂"></select>
+            <input type="text" id="solvent-d-custom" class="column-select solvent-custom hidden" maxlength="40" placeholder="自定义 D 相名称">
+            <input type="range" id="percent-d" min="0" max="100" step="1" value="0" aria-label="D 相比例">
+          </div>
+          <p class="hint">C/D 相为四元泵辅助通道，比例在梯度运行期间保持恒定；A 相比例为 100 − B − C − D。</p>
+
+          <div class="field">
             <div class="field-head"><label for="flow">流速</label><output id="flow-out">1.00 mL/min</output></div>
             <input type="range" id="flow" data-key="flow_ml_min" min="0.1" max="3" step="0.05" value="1">
           </div>
