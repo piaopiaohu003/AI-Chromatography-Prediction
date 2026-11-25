@@ -116,9 +116,6 @@ def _bootstrap_demo() -> None:
     save_store(store)
 
 
-_bootstrap_demo()
-
-
 def _public_user(user: dict) -> dict:
     return {
         "id": user["id"],
@@ -471,3 +468,7 @@ def save_literature_scan(
         "items": scan["items"] if scan else (topic.get("items") or []),
         "new_count": scan["new_count"] if scan else 0,
     }
+
+
+# Seed the demo account at import time, after all helpers are defined.
+_bootstrap_demo()
