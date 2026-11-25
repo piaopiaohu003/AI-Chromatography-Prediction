@@ -234,6 +234,48 @@ button { cursor: pointer; }
 
 .hint { margin: 6px 0 0; font-size: 11px; color: var(--muted); line-height: 1.45; }
 
+/* ---------------- workflow steps ---------------- */
+.step-card .card-head { margin-bottom: 12px; }
+.step-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.step-no {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--teal);
+  background: rgba(45, 212, 191, 0.08);
+  border: 1px solid rgba(45, 212, 191, 0.22);
+  border-radius: 6px;
+  padding: 3px 6px;
+}
+.step-text { min-width: 0; }
+.head-line { display: flex; align-items: center; gap: 8px; }
+.step-desc { margin: 2px 0 0; font-size: 10.5px; line-height: 1.45; color: var(--muted); }
+
+.inline-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.inline-field:last-child { margin-bottom: 0; }
+.inline-field > label { font-size: 12px; color: var(--text-dim); }
+.inline-input { display: flex; align-items: center; gap: 6px; }
+.inline-input input {
+  width: 88px;
+  padding: 6px 8px;
+  text-align: right;
+  background: rgba(8, 14, 19, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+}
+.inline-input input:focus { outline: none; border-color: var(--teal-dim); }
+.inline-input span { min-width: 26px; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+
 /* ---------------- compound list ---------------- */
 .compound-list { display: flex; flex-direction: column; gap: 8px; max-height: 290px; overflow-y: auto; padding-right: 2px; }
 .compound-item {

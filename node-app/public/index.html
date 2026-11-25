@@ -100,9 +100,15 @@
     <!-- ======================= SIMULATION VIEW ======================= -->
     <main class="view" id="view-sim">
       <aside class="sidebar">
-        <section class="card">
+        <section class="card step-card">
           <div class="card-head">
-            <div class="head-title"><h2>样品组分</h2><span class="pill" id="compound-count">0</span></div>
+            <div class="step-title">
+              <span class="step-no">01</span>
+              <div class="step-text">
+                <div class="head-line"><h2>样品与目标</h2><span class="pill" id="compound-count">0</span></div>
+                <p class="step-desc">选择待分离组分并设定进样浓度</p>
+              </div>
+            </div>
             <button class="text-btn" id="btn-add-compound">+ 添加</button>
           </div>
           <div class="quick-search">
@@ -115,10 +121,15 @@
           <div class="compound-list" id="compound-list"></div>
         </section>
 
-        <section class="card">
+        <section class="card step-card">
           <div class="card-head">
-            <h2>色谱条件</h2>
-            <button class="text-btn" id="btn-reset-conditions">重置</button>
+            <div class="step-title">
+              <span class="step-no">02</span>
+              <div class="step-text">
+                <div class="head-line"><h2>分离系统</h2></div>
+                <p class="step-desc">先定色谱模式，再选色谱柱与系统体积</p>
+              </div>
+            </div>
           </div>
 
           <div class="field">
@@ -128,83 +139,6 @@
               <button data-value="normal">正相 NPLC</button>
             </div>
             <p class="hint hidden" id="phase-note">正相模式不使用 pH 和缓冲盐；A 相为正己烷。</p>
-          </div>
-
-          <div class="field">
-            <div class="field-head"><label>洗脱方式</label></div>
-            <div class="segmented" id="seg-mode">
-              <button data-value="isocratic">等度</button>
-              <button data-value="gradient">梯度</button>
-            </div>
-          </div>
-
-          <div class="field">
-            <div class="field-head"><label id="aqueous-label">A 相</label></div>
-            <div class="segmented" id="seg-aqueous"></div>
-            <label class="custom-solvent hidden" id="aqueous-custom-field">
-              <span>自定义 A 相名称</span>
-              <input type="text" id="aqueous-custom" maxlength="40" placeholder="例如：0.1% 甲酸水溶液">
-            </label>
-            <p class="hint hidden" id="aqueous-custom-hint">自定义 A 相按所选相态的基准溶剂估算黏度。</p>
-          </div>
-
-          <div class="field">
-            <div class="field-head"><label id="organic-label">B 相</label></div>
-            <div class="segmented" id="seg-organic"></div>
-            <label class="custom-solvent hidden" id="organic-custom-field">
-              <span>自定义 B 相名称</span>
-              <input type="text" id="organic-custom" maxlength="40" placeholder="例如：乙腈-甲醇 1:1">
-            </label>
-            <p class="hint hidden" id="organic-custom-hint">自定义 B 相按乙腈 / 异丙醇的物性与洗脱强度估算。</p>
-          </div>
-
-          <div class="field" id="iso-field">
-            <div class="field-head"><label for="iso-slider" id="iso-label">有机相比例 B</label><output id="iso-out">50%</output></div>
-            <input type="range" id="iso-slider" min="0" max="100" step="1" value="50">
-          </div>
-
-          <div class="field" id="grad-field">
-            <div class="field-head">
-              <label>梯度程序</label>
-              <button class="mini-btn" id="btn-add-grad">+ 行</button>
-            </div>
-            <div class="gradient-list" id="gradient-list"></div>
-            <p class="hint" id="grad-hint">时间从 0 min 起，A 相 = 100 − B − C − D</p>
-          </div>
-
-          <div class="field">
-            <div class="field-head"><label for="solvent-c">C 相</label><output id="solvent-c-out">未启用</output></div>
-            <select id="solvent-c" class="column-select" aria-label="C 相溶剂"></select>
-            <input type="text" id="solvent-c-custom" class="column-select solvent-custom hidden" maxlength="40" placeholder="自定义 C 相名称">
-            <input type="range" id="percent-c" min="0" max="100" step="1" value="0" aria-label="C 相比例">
-          </div>
-
-          <div class="field">
-            <div class="field-head"><label for="solvent-d">D 相</label><output id="solvent-d-out">未启用</output></div>
-            <select id="solvent-d" class="column-select" aria-label="D 相溶剂"></select>
-            <input type="text" id="solvent-d-custom" class="column-select solvent-custom hidden" maxlength="40" placeholder="自定义 D 相名称">
-            <input type="range" id="percent-d" min="0" max="100" step="1" value="0" aria-label="D 相比例">
-          </div>
-          <p class="hint">C/D 相为四元泵辅助通道：等度模式下比例恒定，梯度模式下由梯度程序逐点控制；A 相比例为 100 − B − C − D。</p>
-
-          <div class="field">
-            <div class="field-head"><label for="flow">流速</label><output id="flow-out">1.00 mL/min</output></div>
-            <input type="range" id="flow" data-key="flow_ml_min" min="0.1" max="3" step="0.05" value="1">
-          </div>
-
-          <div class="field">
-            <div class="field-head"><label for="temperature">柱温</label><output id="temperature-out">30 °C</output></div>
-            <input type="range" id="temperature" data-key="temperature_c" min="15" max="60" step="1" value="30">
-          </div>
-
-          <div class="field" id="ph-field">
-            <div class="field-head"><label for="ph">流动相 pH</label><output id="ph-out">2.5</output></div>
-            <input type="range" id="ph" data-key="ph" min="1" max="12" step="0.1" value="2.5">
-          </div>
-
-          <div class="field">
-            <div class="field-head"><label for="wavelength">检测波长</label><output id="wavelength-out">254 nm</output></div>
-            <input type="range" id="wavelength" data-key="wavelength_nm" min="190" max="400" step="1" value="254">
           </div>
 
           <div class="field">
@@ -223,21 +157,159 @@
               <label>内径 (mm)<input type="number" data-path="column.inner_diameter_mm" min="1" max="10" step="0.1"></label>
               <label>粒径 (µm)<input type="number" data-path="column.particle_um" min="1.2" max="10" step="0.1"></label>
               <label>延迟体积 (mL)<input type="number" data-path="dwell_volume_ml" min="0" max="5" step="0.1"></label>
-              <label>进样量 (µL)<input type="number" data-path="injection_volume_ul" min="0.1" max="100" step="0.5"></label>
-              <label>运行时间 (min)<input type="number" data-path="total_time_min" min="1" max="300" step="1" placeholder="自动"></label>
-              <label>基线噪声 (mAU)<input type="number" data-path="noise_mau" min="0" max="2" step="0.05"></label>
             </div>
           </details>
+        </section>
 
-          <div class="preset-row">
-            <span class="hint">预设方法</span>
-            <div class="preset-buttons">
-              <button class="chip-btn" data-preset="screen">梯度筛查</button>
-              <button class="chip-btn" data-preset="iso50">等度 50%</button>
-              <button class="chip-btn" data-preset="polar">高极性</button>
-              <button class="chip-btn" data-preset="hydrophobic">强疏水</button>
+        <section class="card step-card">
+          <div class="card-head">
+            <div class="step-title">
+              <span class="step-no">03</span>
+              <div class="step-text">
+                <div class="head-line"><h2>流动相</h2></div>
+                <p class="step-desc">配置 A / B 相组成与 pH，按需启用辅助通道</p>
+              </div>
             </div>
           </div>
+
+          <div class="field">
+            <div class="field-head"><label id="aqueous-label">A 相</label></div>
+            <div class="segmented" id="seg-aqueous"></div>
+            <label class="custom-solvent hidden" id="aqueous-custom-field">
+              <span>自定义 A 相名称</span>
+              <input type="text" id="aqueous-custom" maxlength="40" placeholder="例如：0.1% 甲酸水溶液">
+            </label>
+            <p class="hint hidden" id="aqueous-custom-hint">自定义 A 相按所选相态的基准溶剂估算黏度。</p>
+          </div>
+
+          <div class="field" id="ph-field">
+            <div class="field-head"><label for="ph">流动相 pH</label><output id="ph-out">2.5</output></div>
+            <input type="range" id="ph" data-key="ph" min="1" max="12" step="0.1" value="2.5">
+          </div>
+
+          <div class="field">
+            <div class="field-head"><label id="organic-label">B 相</label></div>
+            <div class="segmented" id="seg-organic"></div>
+            <label class="custom-solvent hidden" id="organic-custom-field">
+              <span>自定义 B 相名称</span>
+              <input type="text" id="organic-custom" maxlength="40" placeholder="例如：乙腈-甲醇 1:1">
+            </label>
+            <p class="hint hidden" id="organic-custom-hint">自定义 B 相按乙腈 / 异丙醇的物性与洗脱强度估算。</p>
+          </div>
+
+          <div class="field">
+            <div class="field-head"><label for="solvent-c">C 相</label><output id="solvent-c-out">未启用</output></div>
+            <select id="solvent-c" class="column-select" aria-label="C 相溶剂"></select>
+            <input type="text" id="solvent-c-custom" class="column-select solvent-custom hidden" maxlength="40" placeholder="自定义 C 相名称">
+            <input type="range" id="percent-c" min="0" max="100" step="1" value="0" aria-label="C 相比例">
+          </div>
+
+          <div class="field">
+            <div class="field-head"><label for="solvent-d">D 相</label><output id="solvent-d-out">未启用</output></div>
+            <select id="solvent-d" class="column-select" aria-label="D 相溶剂"></select>
+            <input type="text" id="solvent-d-custom" class="column-select solvent-custom hidden" maxlength="40" placeholder="自定义 D 相名称">
+            <input type="range" id="percent-d" min="0" max="100" step="1" value="0" aria-label="D 相比例">
+          </div>
+          <p class="hint">C/D 相为四元泵辅助通道：等度模式下比例恒定，梯度模式下由梯度程序逐点控制；A 相比例为 100 − B − C − D。</p>
+        </section>
+
+        <section class="card step-card">
+          <div class="card-head">
+            <div class="step-title">
+              <span class="step-no">04</span>
+              <div class="step-text">
+                <div class="head-line"><h2>洗脱程序</h2></div>
+                <p class="step-desc">在固定比例与梯度程序之间切换</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-head"><label>洗脱方式</label></div>
+            <div class="segmented" id="seg-mode">
+              <button data-value="isocratic">等度</button>
+              <button data-value="gradient">梯度</button>
+            </div>
+          </div>
+
+          <div class="field" id="iso-field">
+            <div class="field-head"><label for="iso-slider" id="iso-label">有机相比例 B</label><output id="iso-out">50%</output></div>
+            <input type="range" id="iso-slider" min="0" max="100" step="1" value="50">
+          </div>
+
+          <div class="field" id="grad-field">
+            <div class="field-head">
+              <label>梯度程序</label>
+              <button class="mini-btn" id="btn-add-grad">+ 行</button>
+            </div>
+            <div class="gradient-list" id="gradient-list"></div>
+            <p class="hint" id="grad-hint">时间从 0 min 起，A 相 = 100 − B − C − D</p>
+          </div>
+        </section>
+
+        <section class="card step-card">
+          <div class="card-head">
+            <div class="step-title">
+              <span class="step-no">05</span>
+              <div class="step-text">
+                <div class="head-line"><h2>运行与检测</h2></div>
+                <p class="step-desc">设定流速、柱温、进样与检测参数</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-head"><label for="flow">流速</label><output id="flow-out">1.00 mL/min</output></div>
+            <input type="range" id="flow" data-key="flow_ml_min" min="0.1" max="3" step="0.05" value="1">
+          </div>
+
+          <div class="field">
+            <div class="field-head"><label for="temperature">柱温</label><output id="temperature-out">30 °C</output></div>
+            <input type="range" id="temperature" data-key="temperature_c" min="15" max="60" step="1" value="30">
+          </div>
+
+          <div class="field">
+            <div class="field-head"><label for="wavelength">检测波长</label><output id="wavelength-out">254 nm</output></div>
+            <input type="range" id="wavelength" data-key="wavelength_nm" min="190" max="400" step="1" value="254">
+          </div>
+
+          <div class="field inline-field">
+            <label for="injection-volume">进样量</label>
+            <div class="inline-input">
+              <input id="injection-volume" type="number" data-path="injection_volume_ul" min="0.1" max="100" step="0.5">
+              <span>µL</span>
+            </div>
+          </div>
+
+          <div class="field inline-field">
+            <label for="total-time">运行时间</label>
+            <div class="inline-input">
+              <input id="total-time" type="number" data-path="total_time_min" min="1" max="300" step="1" placeholder="自动">
+              <span>min</span>
+            </div>
+          </div>
+
+          <div class="field inline-field">
+            <label for="noise-level">基线噪声</label>
+            <div class="inline-input">
+              <input id="noise-level" type="number" data-path="noise_mau" min="0" max="2" step="0.05">
+              <span>mAU</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <div class="head-title"><h2>快速方法模板</h2></div>
+            <button class="text-btn" id="btn-reset-conditions">重置条件</button>
+          </div>
+          <div class="preset-buttons">
+            <button class="chip-btn" data-preset="screen">梯度筛查</button>
+            <button class="chip-btn" data-preset="iso50">等度 50%</button>
+            <button class="chip-btn" data-preset="polar">高极性</button>
+            <button class="chip-btn" data-preset="hydrophobic">强疏水</button>
+          </div>
+          <p class="hint">模板会覆盖洗脱方式、梯度与常用运行参数，可在此基础上继续微调。</p>
         </section>
       </aside>
 
