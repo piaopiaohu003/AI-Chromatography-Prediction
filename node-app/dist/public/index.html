@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChromAI · 智能色谱方法平台</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M9 3h6M10 3v6.2L5.6 17a2.8 2.8 0 0 0 2.4 4.2h8a2.8 2.8 0 0 0 2.4-4.2L14 9.2V3"/>
+            <path d="M7.6 14.5h8.8"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>ChromAI</h1>
+          <p>智能色谱方法平台 · RPLC</p>
+        </div>
+      </div>
+
+      <nav class="tabs" id="main-tabs">
+        <button class="tab active" data-view="sim">色谱模拟</button>
+        <button class="tab" data-view="ai">AI 条件设计</button>
+      </nav>
+
+      <div class="top-actions">
+        <span class="badge" id="ai-badge"><i></i>规则引擎</span>
+        <button class="icon-btn" id="btn-settings" title="AI 接口设置" aria-label="AI 接口设置">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+            <circle cx="12" cy="12" r="3.2"/>
+            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 9 19.36a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.64 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.64h.09A1.7 1.7 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.36 9v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- ======================= SIMULATION VIEW ======================= -->
+    <main class="view" id="view-sim">
+      <aside class="sidebar">
+        <section class="card">
+          <div class="card-head">
+            <div class="head-title"><h2>样品组分</h2><span class="pill" id="compound-count">0</span></div>
+            <button class="text-btn" id="btn-add-compound">+ 添加</button>
+          </div>
+          <div class="compound-list" id="compound-list"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h2>色谱条件</h2>
+            <button class="text-btn" id="btn-reset-conditions">重置</button>
+          </div>
+
+          <div class="field">
+            <div class="field-head"><label>洗脱方式</label></div>
+            <div class="segmented" id="seg-mode">
+              <button data-value="isocratic">等度</button>
+              <button data-value="gradient">梯度</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-head"><label>有机相</label></div>
+            <div class="segmented" id="seg-organic">
+              <button data-value="ACN">乙腈 ACN</button>
+              <button data-value="MeOH">甲醇 MeOH</button>
+            </div>
+          </div>
+
+          <div class="field" id="iso-field">
+            <div class="field-head"><label for="iso-slider">有机相比例 B</label><output id="iso-out">50%</output></div>
+            <input type="range" id="iso-slider" min="0" max="100" step="1" value="50">
+          </div>
+
+          <div class="field" id="grad-field">
+            <div class="field-head">
+              <label>梯度程序</label>
+              <button class="mini-btn" id="btn-add-grad">+ 行</button>
+            </div>
+            <div class="gradient-list" id="gradient-list"></div>
+            <p class="hint">时间从 0 min 起，%B 为有机相体积分数</p>
+          </div>
+
+          <div class="field">
+            <div class="field-head"><label for="flow">流速</label><output id="flow-out">1.00 mL/min</output></div>
+            <input type="range" id="flow" data-key="flow_ml_min" min="0.1" max="3" step="0.05" value="1">
+          </div>
+
+          <div class="field">
+            <div class="field-head"><label for="temperature">柱温</label><output id="temperature-out">30 °C</output></div>
+            <input type="range" id="temperature" data-key="temperature_c" min="15" max="60" step="1" value="30">
+          </div>
+
+          <div class="field">
+            <div class="field-head"><label for="ph">流动相 pH</label><output id="ph-out">2.5</output></div>
+            <input type="range" id="ph" data-key="ph" min="1" max="12" step="0.1" value="2.5">
+          </div>
+
+          <div class="field">
+            <div class="field-head"><label for="wavelength">检测波长</label><output id="wavelength-out">254 nm</output></div>
+            <input type="range" id="wavelength" data-key="wavelength_nm" min="190" max="400" step="1" value="254">
+          </div>
+
+          <details class="advanced">
+            <summary>色谱柱与系统参数</summary>
+            <div class="grid-2">
+              <label>柱长 (mm)<input type="number" data-path="column.length_mm" min="30" max="300" step="10"></label>
+              <label>内径 (mm)<input type="number" data-path="column.inner_diameter_mm" min="1" max="10" step="0.1"></label>
+              <label>粒径 (µm)<input type="number" data-path="column.particle_um" min="1.2" max="10" step="0.1"></label>
+              <label>延迟体积 (mL)<input type="number" data-path="dwell_volume_ml" min="0" max="5" step="0.1"></label>
+              <label>进样量 (µL)<input type="number" data-path="injection_volume_ul" min="0.1" max="100" step="0.5"></label>
+              <label>运行时间 (min)<input type="number" data-path="total_time_min" min="1" max="300" step="1" placeholder="自动"></label>
+              <label>基线噪声 (mAU)<input type="number" data-path="noise_mau" min="0" max="2" step="0.05"></label>
+            </div>
+          </details>
+
+          <div class="preset-row">
+            <span class="hint">预设方法</span>
+            <div class="preset-buttons">
+              <button class="chip-btn" data-preset="screen">梯度筛查</button>
+              <button class="chip-btn" data-preset="iso50">等度 50%</button>
+              <button class="chip-btn" data-preset="polar">高极性</button>
+              <button class="chip-btn" data-preset="hydrophobic">强疏水</button>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <section class="main-col">
+        <section class="card chart-card">
+          <div class="chart-head">
+            <div>
+              <h2>色谱图</h2>
+              <p id="chart-sub">正在计算…</p>
+            </div>
+            <div class="chips" id="metric-chips"></div>
+          </div>
+          <div class="chart-wrap" id="sim-chart-wrap">
+            <canvas id="chrom"></canvas>
+            <div class="chart-tip hidden" id="sim-chart-tip"></div>
+            <div class="chart-empty hidden" id="sim-chart-empty">请选择样品组分</div>
+          </div>
+          <div class="chart-legend">
+            <span><i class="swatch line"></i>检测信号 (mAU)</span>
+            <span><i class="swatch dash"></i>梯度组成 %B</span>
+            <span class="muted" id="chart-axis-note">停留时间已计入系统延迟体积</span>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <div class="head-title"><h2>峰信息</h2><span class="pill" id="peak-count">0</span></div>
+            <button class="text-btn" id="btn-export-sim">导出 CSV</button>
+          </div>
+          <div class="table-wrap">
+            <table class="peak-table">
+              <thead>
+                <tr>
+                  <th>#</th><th>组分</th><th>t<sub>R</sub> (min)</th><th>k</th>
+                  <th>峰高 (mAU)</th><th>峰宽 (min)</th><th>塔板数</th><th>Rs</th>
+                </tr>
+              </thead>
+              <tbody id="peak-table-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><h2>方法评估</h2></div>
+          <div class="warning-list" id="warnings"></div>
+        </section>
+      </section>
+    </main>
+
+    <!-- ======================= AI VIEW ======================= -->
+    <main class="view hidden" id="view-ai">
+      <aside class="sidebar">
+        <section class="card">
+          <div class="card-head">
+            <div class="head-title"><h2>待分析组分</h2><span class="pill" id="ai-count">0</span></div>
+            <button class="text-btn" id="btn-ai-manage">管理</button>
+          </div>
+          <div class="ai-chips" id="ai-compound-chips"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><h2>设计约束</h2></div>
+          <div class="field">
+            <div class="field-head"><label>检测器</label></div>
+            <div class="segmented" id="seg-detector">
+              <button data-value="UV">UV / DAD</button>
+              <button data-value="MS">LC-MS</button>
+            </div>
+          </div>
+          <div class="field">
+            <div class="field-head"><label>有机相</label></div>
+            <div class="segmented" id="seg-ai-organic">
+              <button data-value="auto">自动</button>
+              <button data-value="ACN">ACN</button>
+              <button data-value="MeOH">MeOH</button>
+            </div>
+          </div>
+          <div class="field">
+            <div class="field-head"><label>洗脱策略</label></div>
+            <div class="segmented" id="seg-ai-mode">
+              <button data-value="auto">自动</button>
+              <button data-value="isocratic">等度</button>
+              <button data-value="gradient">梯度</button>
+            </div>
+          </div>
+          <div class="field">
+            <div class="field-head"><label for="max-run">最长运行时间</label><output id="max-run-out">40 min</output></div>
+            <input type="range" id="max-run" min="10" max="90" step="5" value="40">
+          </div>
+        </section>
+
+        <section class="card ai-card">
+          <div class="ai-mode-row">
+            <div class="spark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/>
+                <path d="M18.5 15.5l.9 2.4 2.6.9-2.6.9-.9 2.4-.9-2.4-2.6-.9 2.6-.9.9-2.4z"/>
+              </svg>
+            </div>
+            <div>
+              <strong id="ai-mode-label">规则引擎</strong>
+              <p id="ai-mode-desc">未配置 API Key，将使用本地化学规则设计条件</p>
+            </div>
+          </div>
+          <button class="primary-btn" id="btn-recommend">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l1.7 4.6L18 9.3l-4.3 1.7L12 15.6l-1.7-4.6L6 9.3l4.3-1.7L12 3z"/></svg>
+            生成科学的色谱条件
+          </button>
+          <p class="hint">生成后自动调用物理模型复算色谱图与分离度</p>
+        </section>
+      </aside>
+
+      <section class="main-col" id="ai-results">
+        <section class="card ai-placeholder">
+          <div class="placeholder-graphic" aria-hidden="true">
+            <svg viewBox="0 0 120 90" fill="none" stroke="currentColor" stroke-width="1.4">
+              <path d="M8 74h104M8 74V16"/>
+              <path d="M14 70c8 0 8-8 16-8s8 8 16 8 8-8 16-8 8 8 16 8 8-8 16-8 8 8 16 8" opacity=".45"/>
+              <path d="M20 70c6 0 5-26 13-26s7 26 13 26" opacity=".9"/>
+              <circle cx="30" cy="40" r="2" fill="currentColor" stroke="none"/>
+              <path d="M62 70c5 0 4-14 10-14s6 14 11 14" opacity=".7"/>
+            </svg>
+          </div>
+          <h3>给定组分，反推科学条件</h3>
+          <p>系统会结合 logP / pKa / λmax 与 LSS 保留模型，设计色谱柱、流动相、pH、梯度与检测波长，并用同一物理引擎验证分离度。</p>
+          <ul>
+            <li>规则专家系统开箱即用，不依赖网络</li>
+            <li>配置任意 OpenAI 兼容大模型后自动切换为 AI 设计</li>
+            <li>推荐结果可一键应用到模拟台继续微调</li>
+          </ul>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <!-- ======================= SETTINGS MODAL ======================= -->
+  <div class="modal hidden" id="modal-settings">
+    <div class="modal-backdrop" data-close="settings"></div>
+    <div class="modal-panel">
+      <div class="modal-head">
+        <div>
+          <h3>AI 大模型接口</h3>
+          <p>兼容 OpenAI / DeepSeek / 通义千问 / Moonshot / 本地 vLLM 等</p>
+        </div>
+        <button class="icon-btn ghost" data-close="settings" aria-label="关闭">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <label class="stack-label">Base URL
+          <input type="text" id="ai-base" placeholder="https://api.deepseek.com/v1">
+        </label>
+        <label class="stack-label">模型名称
+          <input type="text" id="ai-model" placeholder="deepseek-chat">
+        </label>
+        <label class="stack-label">API Key
+          <input type="password" id="ai-key" placeholder="sk-...">
+        </label>
+        <p class="hint">Key 仅保存在当前浏览器，并随请求发送到本机服务；服务端不会写入日志。也可通过环境变量 CHROM_AI_API_KEY 配置。</p>
+        <div class="settings-status" id="settings-status"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="ghost-btn" id="btn-ai-clear">清除配置</button>
+        <div class="spacer"></div>
+        <button class="ghost-btn" id="btn-ai-test">测试连接</button>
+        <button class="primary-btn small" id="btn-ai-save">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= LIBRARY MODAL ======================= -->
+  <div class="modal hidden" id="modal-library">
+    <div class="modal-backdrop" data-close="library"></div>
+    <div class="modal-panel wide">
+      <div class="modal-head">
+        <div>
+          <h3>添加样品组分</h3>
+          <p>内置 29 种常见化合物的 logP / pKa / λmax 与 C18 校准参数</p>
+        </div>
+        <button class="icon-btn ghost" data-close="library" aria-label="关闭">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="library-toolbar">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+            <input type="text" id="library-search" placeholder="搜索名称 / 英文名 / 类别…">
+          </div>
+          <div class="filter-chips" id="library-categories"></div>
+        </div>
+        <div class="library-grid" id="library-grid"></div>
+
+        <details class="custom-compound">
+          <summary>自定义化合物（输入性质由模型推算）</summary>
+          <div class="grid-3">
+            <label>名称<input type="text" id="custom-name" placeholder="如：未知物 A"></label>
+            <label>logP<input type="number" id="custom-logp" step="0.1" value="2.5"></label>
+            <label>类型
+              <select id="custom-type">
+                <option value="neutral">中性</option>
+                <option value="acid">酸性</option>
+                <option value="base">碱性</option>
+              </select>
+            </label>
+            <label>pKa<input type="number" id="custom-pka" step="0.1" placeholder="可选"></label>
+            <label>λmax (nm)<input type="number" id="custom-lambda" step="1" value="254"></label>
+            <label>浓度 (mg/L)<input type="number" id="custom-conc" step="1" value="100"></label>
+          </div>
+          <button class="ghost-btn" id="btn-add-custom">添加自定义组分</button>
+        </details>
+      </div>
+      <div class="modal-foot">
+        <span class="hint" id="library-selected-note">已选择 0 个</span>
+        <div class="spacer"></div>
+        <button class="ghost-btn" data-close="library">取消</button>
+        <button class="primary-btn small" id="btn-apply-library">添加所选组分</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-stack" id="toasts"></div>
+
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>
