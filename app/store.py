@@ -241,8 +241,9 @@ def _build_backend() -> tuple[Any, str]:
     opts: dict[str, Any] | None = None
     label: str | None = None
 
-    if os.getenv("REDIS_URL"):
-        opts = _TinyRedis.parse_url(os.getenv("REDIS_URL")!)
+    redis_url = os.getenv("REDIS_URL")
+    if redis_url:
+        opts = _TinyRedis.parse_url(redis_url)
         label = f"{opts['host']}:{opts['port']}"
     elif os.getenv("REDIS_HOST"):
         opts = {
