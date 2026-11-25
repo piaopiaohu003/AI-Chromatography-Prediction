@@ -218,24 +218,50 @@ def _eps_rel(compound: Compound, wavelength_nm: float) -> float:
 
 
 def _gradient_arrays(conditions: Conditions, flow: float, run_time: float):
+    """Return time grid plus the B/C/D channel programs.
+
+    Every gradient row carries its own B/C/D percentages so quaternary pumps
+    can ramp auxiliary phases as well; A is always the remainder.
+    """
     if conditions.mode == "gradient" and len(conditions.gradient) >= 1:
         points = sorted(conditions.gradient, key=lambda p: p.time_min)
         times = [p.time_min for p in points]
-        percents = [p.percent_b for p in points]
+        b_values = [p.percent_b for p in points]
+        c_values = [p.percent_c for p in points]
+        d_values = [p.percent_d for p in points]
         if times[0] > 0.0:
             times.insert(0, 0.0)
-            percents.insert(0, percents[0])
+            b_values.insert(0, b_values[0])
+            c_values.insert(0, c_values[0])
+            d_values.insert(0, d_values[0])
         if times[-1] < run_time:
             times.append(run_time)
-            percents.append(percents[-1])
-        return np.asarray(times, dtype=float), np.asarray(percents, dtype=float)
+            b_values.append(b_values[-1])
+            c_values.append(c_values[-1])
+            d_values.append(d_values[-1])
+        return (
+            np.asarray(times, dtype=float),
+            np.asarray(b_values, dtype=float),
+            np.asarray(c_values, dtype=float),
+            np.asarray(d_values, dtype=float),
+        )
     if conditions.mode == "isocratic":
-        value = conditions.percent_b
+        b_value = conditions.percent_b
+        c_value = conditions.percent_c
+        d_value = conditions.percent_d
     elif conditions.gradient:
-        value = conditions.gradient[0].percent_b
+        first = conditions.gradient[0]
+        b_value, c_value, d_value = first.percent_b, first.percent_c, first.percent_d
     else:
-        value = 50.0
-    return np.asarray([0.0, max(run_time, 1.0)]), np.asarray([value, value], dtype=float)
+        b_value = 50.0
+        c_value, d_value = conditions.percent_c, conditions.percent_d
+    times = np.asarray([0.0, max(run_time, 1.0)], dtype=float)
+    return (
+        times,
+        np.asarray([b_value, b_value], dtype=float),
+        np.asarray([c_value, c_value], dtype=float),
+        np.asarray([d_value, d_value], dtype=float),
+    )
 
 
 def _empty_result(conditions: Conditions, note: str) -> Dict:
@@ -310,10 +336,10 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
         k_values = 10.0 ** np.clip(log_k0 - s_values * phi_iso, -6.0, 8.0)
         run_time = min(240.0, max(10.0, t0 * (1.0 + float(np.max(k_values))) * 1.1 + 2.0))
 
-    grad_t, grad_b = _gradient_arrays(conditions, flow, run_time)
+    grad_t, grad_b, grad_c, grad_d = _gradient_arrays(conditions, flow, run_time)
     grad_phi = np.asarray([
-        _modifier_phi(float(pb), conditions.percent_c, conditions.percent_d, conditions)
-        for pb in grad_b
+        _modifier_phi(float(pb), float(pc), float(pd), conditions)
+        for pb, pc, pd in zip(grad_b, grad_c, grad_d)
     ])
     dwell_t = conditions.dwell_volume_ml / flow if flow > 0 else 0.0
     if conditions.mode == "gradient" and conditions.gradient:
@@ -392,9 +418,10 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
     )
     signal = signal + baseline + rng.normal(0.0, conditions.noise_mau, grid.size)
 
-    composition = np.interp(
-        np.clip(grid - dwell_t, grad_t[0], grad_t[-1]), grad_t, grad_b
-    )
+    composition_grid = np.clip(grid - dwell_t, grad_t[0], grad_t[-1])
+    composition = np.interp(composition_grid, grad_t, grad_b)
+    composition_c = np.interp(composition_grid, grad_t, grad_c)
+    composition_d = np.interp(composition_grid, grad_t, grad_d)
 
     # --- peak table -------------------------------------------------------
     order = np.argsort(np.where(finite, tr, 1e9))
@@ -453,8 +480,8 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
     base_visc = _aqueous_viscosity(conditions)
     c_key = _channel_key(conditions.solvent_c, conditions.phase)
     d_key = _channel_key(conditions.solvent_d, conditions.phase)
-    frac_c = conditions.percent_c / 100.0 if c_key else 0.0
-    frac_d = conditions.percent_d / 100.0 if d_key else 0.0
+    frac_c = float(np.mean(composition_c)) / 100.0 if c_key else 0.0
+    frac_d = float(np.mean(composition_d)) / 100.0 if d_key else 0.0
     frac_a = max(0.0, 1.0 - mean_b - frac_c - frac_d)
     mix = [(frac_a, base_visc), (mean_b, ORGANIC_PROPS[organic_key]["visc"])]
     if c_key:
@@ -536,12 +563,16 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
             + ("异丙醇" if phase == "normal" else "乙腈")
             + "的物性与洗脱强度估算。"
         )
-    max_b = (
-        max((p.percent_b for p in conditions.gradient), default=conditions.percent_b)
-        if conditions.mode == "gradient"
-        else conditions.percent_b
-    )
-    if max_b + conditions.percent_c + conditions.percent_d > 100.5:
+    extra_c = conditions.percent_c if c_key else 0.0
+    extra_d = conditions.percent_d if d_key else 0.0
+    if conditions.mode == "gradient" and conditions.gradient:
+        over_total = any(
+            p.percent_b + (p.percent_c if c_key else 0.0) + (p.percent_d if d_key else 0.0) > 100.5
+            for p in conditions.gradient
+        )
+    else:
+        over_total = conditions.percent_b + extra_c + extra_d > 100.5
+    if over_total:
         warnings.append(
             "B/C/D 相比例合计超过 100%，计算时已按比例归一化，请检查泵程序设置。"
         )

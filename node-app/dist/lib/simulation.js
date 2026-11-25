@@ -202,29 +202,51 @@ function epsRel(compound, wavelengthNm) {
 }
 
 function gradientArrays(conditions, flow, runTime) {
+  // Every gradient row carries B/C/D percentages so quaternary pumps can ramp
+  // auxiliary phases; A is always the remainder.
   if (conditions.mode === 'gradient' && conditions.gradient.length >= 1) {
     const points = conditions.gradient.slice().sort((a, b) => a.time_min - b.time_min);
     const times = points.map((p) => p.time_min);
-    const percents = points.map((p) => p.percent_b);
+    const bValues = points.map((p) => Number(p.percent_b) || 0.0);
+    const cValues = points.map((p) => Number(p.percent_c) || 0.0);
+    const dValues = points.map((p) => Number(p.percent_d) || 0.0);
     if (times[0] > 0.0) {
       times.unshift(0.0);
-      percents.unshift(percents[0]);
+      bValues.unshift(bValues[0]);
+      cValues.unshift(cValues[0]);
+      dValues.unshift(dValues[0]);
     }
     if (times[times.length - 1] < runTime) {
       times.push(runTime);
-      percents.push(percents[percents.length - 1]);
+      bValues.push(bValues[bValues.length - 1]);
+      cValues.push(cValues[cValues.length - 1]);
+      dValues.push(dValues[dValues.length - 1]);
     }
-    return { times, percents };
+    return { times, b: bValues, c: cValues, d: dValues };
   }
-  let value;
+  let bValue;
+  let cValue;
+  let dValue;
   if (conditions.mode === 'isocratic') {
-    value = conditions.percent_b;
+    bValue = conditions.percent_b;
+    cValue = conditions.percent_c;
+    dValue = conditions.percent_d;
   } else if (conditions.gradient.length) {
-    value = conditions.gradient[0].percent_b;
+    const first = conditions.gradient[0];
+    bValue = first.percent_b;
+    cValue = Number(first.percent_c) || 0.0;
+    dValue = Number(first.percent_d) || 0.0;
   } else {
-    value = 50.0;
+    bValue = 50.0;
+    cValue = conditions.percent_c;
+    dValue = conditions.percent_d;
   }
-  return { times: [0.0, Math.max(runTime, 1.0)], percents: [value, value] };
+  return {
+    times: [0.0, Math.max(runTime, 1.0)],
+    b: [bValue, bValue],
+    c: [cValue, cValue],
+    d: [dValue, dValue],
+  };
 }
 
 function emptyResult(conditions, note) {
@@ -305,9 +327,11 @@ function simulate(compounds, conditions) {
 
   const grad = gradientArrays(conditions, flow, runTime);
   const gradT = grad.times;
-  const gradB = grad.percents;
-  const gradPhi = gradB.map((pb) => modifierPhi(
-    pb, conditions.percent_c, conditions.percent_d, conditions,
+  const gradB = grad.b;
+  const gradC = grad.c;
+  const gradD = grad.d;
+  const gradPhi = gradB.map((pb, index) => modifierPhi(
+    pb, gradC[index], gradD[index], conditions,
   ));
   const dwellT = flow > 0 ? conditions.dwell_volume_ml / flow : 0.0;
   let programEnd;
@@ -420,9 +444,13 @@ function simulate(compounds, conditions) {
   }
 
   const composition = new Array(grid.length);
+  const compositionC = new Array(grid.length);
+  const compositionD = new Array(grid.length);
   for (let g = 0; g < grid.length; g += 1) {
     const q = clamp(grid[g] - dwellT, gradT[0], gradT[gradT.length - 1]);
     composition[g] = interp(q, gradT, gradB);
+    compositionC[g] = interp(q, gradT, gradC);
+    compositionD[g] = interp(q, gradT, gradD);
   }
 
   // --- peak table -------------------------------------------------------
@@ -491,8 +519,8 @@ function simulate(compounds, conditions) {
   const baseVisc = aqueousViscosity(conditions);
   const cKey = channelKey(conditions.solvent_c, conditions.phase);
   const dKey = channelKey(conditions.solvent_d, conditions.phase);
-  const fracC = cKey ? (Number(conditions.percent_c) || 0.0) / 100.0 : 0.0;
-  const fracD = dKey ? (Number(conditions.percent_d) || 0.0) / 100.0 : 0.0;
+  const fracC = cKey ? mean(compositionC) / 100.0 : 0.0;
+  const fracD = dKey ? mean(compositionD) / 100.0 : 0.0;
   const fracA = Math.max(0.0, 1.0 - meanB - fracC - fracD);
   const mix = [[fracA, baseVisc], [meanB, ORGANIC_PROPS[organicKey(conditions)].visc]];
   if (cKey) {
@@ -591,10 +619,14 @@ function simulate(compounds, conditions) {
       + (phase === 'normal' ? '异丙醇' : '乙腈') + '的物性与洗脱强度估算。',
     );
   }
-  const maxB = conditions.mode === 'gradient'
-    ? maxOf(conditions.gradient.map((p) => p.percent_b))
-    : conditions.percent_b;
-  if (maxB + (Number(conditions.percent_c) || 0.0) + (Number(conditions.percent_d) || 0.0) > 100.5) {
+  const overTotal = conditions.mode === 'gradient' && conditions.gradient.length
+    ? conditions.gradient.some(
+      (p) => (Number(p.percent_b) || 0)
+        + (cKey ? (Number(p.percent_c) || 0) : 0)
+        + (dKey ? (Number(p.percent_d) || 0) : 0) > 100.5,
+    )
+    : conditions.percent_b + (cKey ? conditions.percent_c : 0) + (dKey ? conditions.percent_d : 0) > 100.5;
+  if (overTotal) {
     warnings.push('B/C/D 相比例合计超过 100%，计算时已按比例归一化，请检查泵程序设置。');
   }
   for (const [slot, value, label] of [

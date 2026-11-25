@@ -169,7 +169,7 @@
               <button class="mini-btn" id="btn-add-grad">+ 行</button>
             </div>
             <div class="gradient-list" id="gradient-list"></div>
-            <p class="hint" id="grad-hint">时间从 0 min 起，%B 为有机相体积分数</p>
+            <p class="hint" id="grad-hint">时间从 0 min 起，A 相 = 100 − B − C − D</p>
           </div>
 
           <div class="field">
@@ -185,7 +185,7 @@
             <input type="text" id="solvent-d-custom" class="column-select solvent-custom hidden" maxlength="40" placeholder="自定义 D 相名称">
             <input type="range" id="percent-d" min="0" max="100" step="1" value="0" aria-label="D 相比例">
           </div>
-          <p class="hint">C/D 相为四元泵辅助通道，比例在梯度运行期间保持恒定；A 相比例为 100 − B − C − D。</p>
+          <p class="hint">C/D 相为四元泵辅助通道：等度模式下比例恒定，梯度模式下由梯度程序逐点控制；A 相比例为 100 − B − C − D。</p>
 
           <div class="field">
             <div class="field-head"><label for="flow">流速</label><output id="flow-out">1.00 mL/min</output></div>

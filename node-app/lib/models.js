@@ -130,6 +130,8 @@ function normalizeGradient(raw, path) {
     return {
       time_min: parseNumber(item.time_min, `${itemPath}.time_min`, { required: true, min: 0.0, max: 600.0 }),
       percent_b: parseNumber(item.percent_b, `${itemPath}.percent_b`, { required: true, min: 0.0, max: 100.0 }),
+      percent_c: parseNumber(item.percent_c, `${itemPath}.percent_c`, { defaultValue: 0.0, min: 0.0, max: 100.0 }),
+      percent_d: parseNumber(item.percent_d, `${itemPath}.percent_d`, { defaultValue: 0.0, min: 0.0, max: 100.0 }),
     };
   });
 }

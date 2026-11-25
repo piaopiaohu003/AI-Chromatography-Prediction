@@ -1401,6 +1401,7 @@ function bindSimControls() {
     $(`#solvent-${slot}`).addEventListener("change", (event) => {
       state.conditions[`solvent_${slot}`] = event.target.value;
       syncAuxFields();
+      renderGradient();
       if (event.target.value === "custom") {
         setTimeout(() => $(`#solvent-${slot}-custom`).focus(), 0);
       }
@@ -1466,7 +1467,12 @@ function bindSimControls() {
   $("#btn-add-grad").addEventListener("click", () => {
     const points = state.conditions.gradient;
     const last = points[points.length - 1] || { time_min: 0, percent_b: 5 };
-    points.push({ time_min: Math.round((last.time_min + 5) * 10) / 10, percent_b: last.percent_b });
+    points.push({
+      time_min: Math.round((last.time_min + 5) * 10) / 10,
+      percent_b: last.percent_b,
+      percent_c: Number(last.percent_c) || 0,
+      percent_d: Number(last.percent_d) || 0,
+    });
     renderGradient();
     persist();
     scheduleSim();
@@ -1643,10 +1649,12 @@ function syncAuxFields() {
       }
     }
     const percent = conditions[`percent_${slot}`] || 0;
+    const isGradient = conditions.mode === "gradient";
     const slider = $(`#percent-${slot}`);
     if (slider) {
       slider.value = String(percent);
-      slider.disabled = value === "none";
+      slider.disabled = value === "none" || isGradient;
+      slider.classList.toggle("hidden", isGradient);
     }
     const out = $(`#solvent-${slot}-out`);
     if (out) {
@@ -1659,7 +1667,9 @@ function syncAuxFields() {
           { ...ORGANIC_NAMES, ...AQUEOUS_NAMES },
           "自定义溶剂",
         );
-        out.textContent = `${Math.round(percent)}% · ${label}`;
+        out.textContent = isGradient
+          ? `由梯度表控制 · ${label}`
+          : `${Math.round(percent)}% · ${label}`;
       }
     }
   });
@@ -1744,7 +1754,6 @@ function syncPhaseUI() {
   $("#phase-note").classList.toggle("hidden", !normal);
   $("#ph-field").classList.toggle("hidden", normal);
   $("#iso-label").textContent = "B 相比例";
-  $("#grad-hint").textContent = "时间从 0 min 起，%B 为 B 相体积分数";
   $("#column-hint").textContent = normal
     ? "正相推荐硅胶/二醇/氨基柱，A 相为正己烷"
     : "切换预设会同时应用推荐流速与系统延迟体积";
@@ -1867,6 +1876,7 @@ function syncModeVisibility() {
   $("#grad-field").classList.toggle("hidden", !isGradient);
   $("#iso-field").classList.toggle("hidden", isGradient);
   $$("[data-preset]").forEach((button) => button.classList.remove("active"));
+  syncAuxFields();
 }
 
 function updateOutputs() {
@@ -1975,23 +1985,68 @@ function applyPreset(name) {
   if (button) button.classList.add("active");
 }
 
+function ensureGradientChannelFields() {
+  const conditions = state.conditions;
+  const seedC = Number(conditions.percent_c) || 0;
+  const seedD = Number(conditions.percent_d) || 0;
+  conditions.gradient.forEach((point) => {
+    if (!Number.isFinite(Number(point.percent_c))) point.percent_c = seedC;
+    if (!Number.isFinite(Number(point.percent_d))) point.percent_d = seedD;
+  });
+}
+
+function gradientAuxChannels() {
+  const conditions = state.conditions;
+  return {
+    hasC: Boolean(conditions.solvent_c) && conditions.solvent_c !== "none",
+    hasD: Boolean(conditions.solvent_d) && conditions.solvent_d !== "none",
+  };
+}
+
 function renderGradient() {
   const wrap = $("#gradient-list");
   if (!wrap) return;
-  const rows = state.conditions.gradient.map((point, index) => `
-    <div class="grad-row" data-grad-index="${index}">
-      <span class="idx">${String(index + 1).padStart(2, "0")}</span>
-      <input type="number" step="0.1" min="0" max="300" value="${point.time_min}" data-grad-field="time_min" aria-label="时间">
-      <input type="number" step="0.1" min="0" max="100" value="${point.percent_b}" data-grad-field="percent_b" aria-label="有机相比例">
-      <button class="remove-btn" data-remove-grad title="删除该梯度点" aria-label="删除">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
-      </button>
-    </div>
-  `).join("");
+  ensureGradientChannelFields();
+  const { hasC, hasD } = gradientAuxChannels();
+  const columns = 2 + (hasC ? 1 : 0) + (hasD ? 1 : 0);
+  const template = `16px repeat(${columns}, minmax(0, 1fr)) 24px`;
+  const rows = state.conditions.gradient.map((point, index) => {
+    const cells = [
+      `<input type="number" step="0.1" min="0" max="300" value="${point.time_min}" data-grad-field="time_min" aria-label="时间">`,
+      `<input type="number" step="0.1" min="0" max="100" value="${point.percent_b}" data-grad-field="percent_b" aria-label="B 相比例">`,
+    ];
+    if (hasC) {
+      cells.push(`<input type="number" step="0.1" min="0" max="100" value="${point.percent_c}" data-grad-field="percent_c" aria-label="C 相比例">`);
+    }
+    if (hasD) {
+      cells.push(`<input type="number" step="0.1" min="0" max="100" value="${point.percent_d}" data-grad-field="percent_d" aria-label="D 相比例">`);
+    }
+    return `
+      <div class="grad-row" data-grad-index="${index}" style="grid-template-columns:${template}">
+        <span class="idx">${String(index + 1).padStart(2, "0")}</span>
+        ${cells.join("")}
+        <button class="remove-btn" data-remove-grad title="删除该梯度点" aria-label="删除">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+    `;
+  }).join("");
+  const headers = ["#", "时间 (min)", "%B"];
+  if (hasC) headers.push("%C");
+  if (hasD) headers.push("%D");
+  headers.push("");
   wrap.innerHTML = `
-    <div class="grad-units"><span>#</span><span>时间 (min)</span><span>%B</span><span></span></div>
+    <div class="grad-units" style="grid-template-columns:${template}">
+      ${headers.map((text) => `<span>${text}</span>`).join("")}
+    </div>
     ${rows}
   `;
+  const hint = $("#grad-hint");
+  if (hint) {
+    hint.textContent = hasC || hasD
+      ? "A 相 = 100 − B − C − D，随梯度自动计算"
+      : "时间从 0 min 起，%B 为 B 相体积分数";
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -2339,13 +2394,21 @@ function renderAIResult(result) {
   const metrics = result.result.metrics;
   const conditions = result.conditions;
   const isLlm = result.source === "llm";
+  const auxC = Boolean(conditions.solvent_c) && conditions.solvent_c !== "none";
+  const auxD = Boolean(conditions.solvent_d) && conditions.solvent_d !== "none";
   const gradientRows = Array.isArray(method.gradient) && conditions.mode === "gradient"
-    ? method.gradient.map((point) => `<tr><td>${fmt(point.time_min, 1)}</td><td>${fmt(point.percent_b, 1)}</td></tr>`).join("")
+    ? method.gradient.map((point) => {
+      let cells = `<td>${fmt(point.time_min, 1)}</td><td>${fmt(point.percent_b, 1)}</td>`;
+      if (auxC) cells += `<td>${fmt(point.percent_c ?? conditions.percent_c, 1)}</td>`;
+      if (auxD) cells += `<td>${fmt(point.percent_d ?? conditions.percent_d, 1)}</td>`;
+      return `<tr>${cells}</tr>`;
+    }).join("")
     : "";
+  const gradientHead = `<th>时间 (min)</th><th>%B</th>${auxC ? "<th>%C</th>" : ""}${auxD ? "<th>%D</th>" : ""}`;
   const gradientBlock = conditions.mode === "gradient"
-    ? `<div class="table-wrap" style="max-width:340px">
+    ? `<div class="table-wrap" style="max-width:380px">
         <table class="peak-table">
-          <thead><tr><th>时间 (min)</th><th>%B</th></tr></thead>
+          <thead><tr>${gradientHead}</tr></thead>
           <tbody>${gradientRows}</tbody>
         </table>
       </div>`

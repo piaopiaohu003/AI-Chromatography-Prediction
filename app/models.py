@@ -18,6 +18,8 @@ class ColumnConfig(BaseModel):
 class GradientPoint(BaseModel):
     time_min: float = Field(..., ge=0.0, le=600.0)
     percent_b: float = Field(..., ge=0.0, le=100.0)
+    percent_c: float = Field(0.0, ge=0.0, le=100.0)
+    percent_d: float = Field(0.0, ge=0.0, le=100.0)
 
 
 class Conditions(BaseModel):
