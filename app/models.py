@@ -73,6 +73,11 @@ class RecommendConstraints(BaseModel):
     max_run_min: float = Field(40.0, ge=8.0, le=120.0)
 
 
+class AuthRequest(BaseModel):
+    username: str
+    password: str
+
+
 class AIOverride(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = None

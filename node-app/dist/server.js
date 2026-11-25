@@ -14,6 +14,7 @@ const { identify } = require('./lib/identify');
 const aiClient = require('./lib/ai-client');
 const models = require('./lib/models');
 const pubchem = require('./lib/pubchem');
+const auth = require('./lib/auth');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const STATIC_DIR = path.join(PUBLIC_DIR, 'static');
@@ -40,17 +41,44 @@ const MIME_TYPES = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
-function sendJson(res, status, payload) {
+function sendJson(res, status, payload, headers = {}) {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
+    ...headers,
   });
   res.end(body);
 }
 
 function sendError(res, status, detail) {
   sendJson(res, status, { detail });
+}
+
+function readCookie(req, name) {
+  const header = req.headers.cookie || '';
+  for (const part of header.split(';')) {
+    const index = part.indexOf('=');
+    if (index === -1) continue;
+    if (part.slice(0, index).trim() === name) {
+      return decodeURIComponent(part.slice(index + 1).trim());
+    }
+  }
+  return null;
+}
+
+function sessionCookie(req, token, maxAgeSeconds) {
+  const secure = req.headers['x-forwarded-proto'] === 'https'
+    || Boolean(req.socket && req.socket.encrypted);
+  const parts = [
+    `${auth.COOKIE_NAME}=${token}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${maxAgeSeconds}`,
+  ];
+  if (secure) parts.push('Secure');
+  return parts.join('; ');
 }
 
 function searchLocalCompounds(query, limit = 12) {
@@ -137,6 +165,63 @@ async function handleApi(req, res, pathname) {
       return sendError(res, 405, 'Method Not Allowed');
     }
     return sendJson(res, 200, { status: 'ok' });
+  }
+
+  if (pathname === '/api/auth/register' || pathname === '/api/auth/login') {
+    if (method !== 'POST') {
+      return sendError(res, 405, 'Method Not Allowed');
+    }
+    const body = await readJsonBody(req);
+    if (!models.isPlainObject(body)) {
+      throw new models.ValidationError('请求体必须是 JSON 对象');
+    }
+    try {
+      const action = pathname === '/api/auth/register' ? auth.register : auth.login;
+      const { user, token } = action(body.username, body.password);
+      return sendJson(
+        res,
+        200,
+        { user },
+        { 'Set-Cookie': sessionCookie(req, token, auth.SESSION_TTL_SECONDS) },
+      );
+    } catch (err) {
+      if (err instanceof auth.AuthError) {
+        return sendError(res, err.status, err.message);
+      }
+      throw err;
+    }
+  }
+
+  if (pathname === '/api/auth/logout') {
+    if (method !== 'POST') {
+      return sendError(res, 405, 'Method Not Allowed');
+    }
+    auth.logout(readCookie(req, auth.COOKIE_NAME));
+    return sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
+  }
+
+  if (pathname === '/api/auth/me') {
+    if (method !== 'GET') {
+      return sendError(res, 405, 'Method Not Allowed');
+    }
+    const user = auth.currentUser(readCookie(req, auth.COOKIE_NAME));
+    if (!user) {
+      return sendError(res, 401, '请先登录');
+    }
+    return sendJson(res, 200, { user });
+  }
+
+  const protectedPaths = [
+    '/api/simulate',
+    '/api/recommend',
+    '/api/identify',
+    '/api/ai/test',
+  ];
+  if (protectedPaths.includes(pathname)) {
+    const user = auth.currentUser(readCookie(req, auth.COOKIE_NAME));
+    if (!user) {
+      return sendError(res, 401, '请先登录');
+    }
   }
 
   if (pathname === '/api/compounds/search') {

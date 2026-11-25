@@ -973,6 +973,85 @@ input[type="range"]::-moz-range-thumb {
   .app { padding: 0 16px 32px; }
   .chart-wrap { height: 320px; }
 }
+/* ---------------- auth ---------------- */
+.auth-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(900px 520px at 50% 0%, rgba(45, 212, 191, 0.12), transparent 62%),
+    rgba(5, 10, 14, 0.94);
+  backdrop-filter: blur(10px);
+}
+.auth-card {
+  width: 100%;
+  max-width: 390px;
+  padding: 28px 26px 24px;
+  background: linear-gradient(180deg, #13212b, #0d1720);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+  animation: modalIn 0.24s ease;
+}
+.auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+.auth-brand h1 { margin: 0; font-size: 20px; letter-spacing: 0.4px; }
+.auth-brand p { margin: 2px 0 0; font-size: 11px; color: var(--muted); }
+.auth-tabs { margin-bottom: 18px; }
+.auth-tabs button { flex: 1; }
+#auth-form { display: flex; flex-direction: column; gap: 14px; }
+.auth-field { display: flex; flex-direction: column; gap: 6px; font-size: 11.5px; color: var(--text-dim); }
+.auth-field input {
+  width: 100%;
+  padding: 10px 12px;
+  background: rgba(8, 14, 19, 0.72);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-size: 13px;
+  color: var(--text);
+}
+.auth-field input:focus {
+  outline: none;
+  border-color: var(--teal-dim);
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.08);
+}
+.auth-error { margin: 0; font-size: 12px; color: var(--red); }
+.auth-hint { margin: 18px 0 0; text-align: center; font-size: 11px; line-height: 1.6; color: var(--muted); }
+
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 5px 4px 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(15, 26, 34, 0.8);
+}
+.user-avatar {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 600;
+  color: #04110f;
+  background: linear-gradient(135deg, #5eead4, #38bdf8);
+}
+.user-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.user-chip .icon-btn { width: 28px; height: 28px; border-radius: 50%; }
+.user-chip .icon-btn svg { width: 15px; height: 15px; }
+
 @media (max-width: 900px) {
   .view { grid-template-columns: 1fr; }
   .topbar { flex-wrap: wrap; gap: 12px; }

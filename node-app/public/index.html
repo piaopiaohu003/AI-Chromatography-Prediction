@@ -7,6 +7,47 @@
   <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
+  <div class="auth-gate" id="auth-gate">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <div class="logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M9 3h6M10 3v6.2L5.6 17a2.8 2.8 0 0 0 2.4 4.2h8a2.8 2.8 0 0 0 2.4-4.2L14 9.2V3"/>
+            <path d="M7.6 14.5h8.8"/>
+          </svg>
+        </div>
+        <div>
+          <h1>ChromAI</h1>
+          <p>正相 / 反相色谱智能方法平台</p>
+        </div>
+      </div>
+
+      <div class="segmented auth-tabs" id="auth-tabs">
+        <button type="button" data-auth-tab="login" class="active">登录</button>
+        <button type="button" data-auth-tab="register">注册</button>
+      </div>
+
+      <form id="auth-form" autocomplete="on">
+        <label class="auth-field">
+          <span>用户名</span>
+          <input id="auth-username" name="username" maxlength="24" autocomplete="username" required>
+        </label>
+        <label class="auth-field">
+          <span>密码</span>
+          <input id="auth-password" name="password" type="password" maxlength="64" autocomplete="current-password" required>
+        </label>
+        <label class="auth-field hidden" id="auth-confirm-field">
+          <span>确认密码</span>
+          <input id="auth-confirm" type="password" maxlength="64" autocomplete="new-password">
+        </label>
+        <p class="auth-error hidden" id="auth-error"></p>
+        <button type="submit" class="primary-btn" id="auth-submit">登录</button>
+      </form>
+
+      <p class="auth-hint">账号数据保存在服务器运行实例中，重新部署后需要重新注册。</p>
+    </div>
+  </div>
+
   <div class="app">
     <header class="topbar">
       <div class="brand">
@@ -28,6 +69,16 @@
       </nav>
 
       <div class="top-actions">
+        <div class="user-chip hidden" id="user-chip">
+          <span class="user-avatar" id="user-avatar">C</span>
+          <span class="user-name" id="user-name">—</span>
+          <button class="icon-btn" id="btn-logout" title="退出登录" aria-label="退出登录">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+              <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/>
+              <path d="M10 17l5-5-5-5M15 12H3"/>
+            </svg>
+          </button>
+        </div>
         <span class="badge" id="ai-badge"><i></i>规则引擎</span>
         <button class="icon-btn" id="btn-settings" title="AI 接口设置" aria-label="AI 接口设置">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">

@@ -238,6 +238,7 @@ const state = {
   libraryCategory: "全部",
   librarySearch: "",
   onlineLibrary: [],
+  user: null,
 };
 
 const charts = { sim: null, ai: null };
@@ -287,6 +288,7 @@ async function postJSON(path, body, signal) {
     signal,
   });
   if (!res.ok) {
+    if (res.status === 401) showAuthGate();
     let detail = "";
     try {
       const data = await res.json();
@@ -361,13 +363,168 @@ function restore() {
 }
 
 /* ------------------------------------------------------------------ */
+/* auth                                                                */
+/* ------------------------------------------------------------------ */
+
+function bindAuth() {
+  $("#auth-tabs").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-auth-tab]");
+    if (!button) return;
+    setAuthMode(button.dataset.authTab);
+  });
+  $("#auth-form").addEventListener("submit", submitAuth);
+  $("#btn-logout").addEventListener("click", logout);
+}
+
+function setAuthMode(mode) {
+  authMode = mode === "register" ? "register" : "login";
+  const register = authMode === "register";
+  $$("#auth-tabs button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.authTab === authMode);
+  });
+  $("#auth-confirm-field").classList.toggle("hidden", !register);
+  $("#auth-password").autocomplete = register ? "new-password" : "current-password";
+  $("#auth-submit").textContent = register ? "注册并登录" : "登录";
+  hideAuthError();
+}
+
+function showAuthGate() {
+  const gate = $("#auth-gate");
+  if (!gate) return;
+  gate.classList.remove("hidden");
+  const username = $("#auth-username");
+  if (username && !username.value) {
+    setTimeout(() => username.focus(), 60);
+  }
+}
+
+function hideAuthGate() {
+  const gate = $("#auth-gate");
+  if (gate) gate.classList.add("hidden");
+}
+
+function showAuthError(message) {
+  const node = $("#auth-error");
+  if (!node) return;
+  node.textContent = message;
+  node.classList.remove("hidden");
+}
+
+function hideAuthError() {
+  const node = $("#auth-error");
+  if (!node) return;
+  node.textContent = "";
+  node.classList.add("hidden");
+}
+
+function setAuthBusy(busy) {
+  const button = $("#auth-submit");
+  if (!button) return;
+  button.disabled = busy;
+  if (busy) {
+    button.textContent = "请稍候…";
+  } else {
+    button.textContent = authMode === "register" ? "注册并登录" : "登录";
+  }
+}
+
+async function submitAuth(event) {
+  event.preventDefault();
+  hideAuthError();
+  const username = $("#auth-username").value.trim();
+  const password = $("#auth-password").value;
+  const confirm = $("#auth-confirm").value;
+  if (!username || !password) {
+    showAuthError("请输入用户名和密码");
+    return;
+  }
+  if (authMode === "register" && password !== confirm) {
+    showAuthError("两次输入的密码不一致");
+    return;
+  }
+  setAuthBusy(true);
+  const path = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
+  try {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ username, password }),
+    });
+    let data = {};
+    try { data = await res.json(); } catch (_) { /* ignore */ }
+    if (!res.ok) {
+      throw new Error(typeof data.detail === "string" ? data.detail : "操作失败，请稍后重试");
+    }
+    state.user = data.user;
+    renderUser();
+    hideAuthGate();
+    $("#auth-password").value = "";
+    $("#auth-confirm").value = "";
+    await startApp();
+    toast(`${authMode === "register" ? "注册" : "登录"}成功，欢迎 ${state.user.username}`, "ok");
+  } catch (err) {
+    showAuthError(err.message);
+  } finally {
+    setAuthBusy(false);
+  }
+}
+
+function renderUser() {
+  const chip = $("#user-chip");
+  if (!chip) return;
+  if (!state.user) {
+    chip.classList.add("hidden");
+    return;
+  }
+  chip.classList.remove("hidden");
+  $("#user-name").textContent = state.user.username;
+  $("#user-avatar").textContent = state.user.username.slice(0, 1).toUpperCase();
+}
+
+async function logout() {
+  try {
+    await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+  } catch (_) { /* ignore */ }
+  window.location.reload();
+}
+
+/* ------------------------------------------------------------------ */
 /* boot                                                                */
 /* ------------------------------------------------------------------ */
 
 document.addEventListener("DOMContentLoaded", init);
 
+let appStarted = false;
+let authMode = "login";
+
 async function init() {
   restore();
+  bindAuth();
+  if (await loadSession()) {
+    await startApp();
+  } else {
+    showAuthGate();
+  }
+}
+
+async function loadSession() {
+  try {
+    const res = await fetch("/api/auth/me", { credentials: "same-origin" });
+    if (!res.ok) return false;
+    const data = await res.json();
+    state.user = data.user || null;
+    renderUser();
+    return Boolean(state.user);
+  } catch (_) {
+    return false;
+  }
+}
+
+async function startApp() {
+  if (appStarted) return;
+  appStarted = true;
+  hideAuthGate();
   bindTabs();
   bindModals();
   bindSimControls();

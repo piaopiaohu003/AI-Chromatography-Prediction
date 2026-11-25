@@ -4,16 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import ai_client
+from . import ai_client, auth
 from .compounds import CATEGORIES, COMPOUNDS
 from .identify import identify
 from .pubchem import search_online
 from .models import (
     AITestRequest,
+    AuthRequest,
     IdentifyRequest,
     RecommendRequest,
     SimulateRequest,
@@ -26,11 +27,30 @@ STATIC_DIR = ROOT / "static"
 
 app = FastAPI(
     title="ChromAI · 智能色谱方法平台",
-    description="Reversed-phase HPLC retention simulation + AI assisted method design",
-    version="1.0.0",
+    description="Reversed-phase and normal-phase HPLC retention simulation + AI assisted method design",
+    version="1.1.0",
 )
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+def _set_session_cookie(request: Request, response: Response, token: str, max_age: int) -> None:
+    response.set_cookie(
+        auth.COOKIE_NAME,
+        token,
+        max_age=max_age,
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+        path="/",
+    )
+
+
+def require_user(request: Request) -> dict:
+    user = auth.current_user(request.cookies.get(auth.COOKIE_NAME))
+    if not user:
+        raise HTTPException(status_code=401, detail="请先登录")
+    return user
 
 
 @app.get("/")
@@ -76,8 +96,43 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+@app.post("/api/auth/register")
+def auth_register(payload: AuthRequest, request: Request, response: Response) -> dict:
+    try:
+        user, token = auth.register(payload.username, payload.password)
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+    _set_session_cookie(request, response, token, auth.SESSION_TTL_SECONDS)
+    return {"user": user}
+
+
+@app.post("/api/auth/login")
+def auth_login(payload: AuthRequest, request: Request, response: Response) -> dict:
+    try:
+        user, token = auth.login(payload.username, payload.password)
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+    _set_session_cookie(request, response, token, auth.SESSION_TTL_SECONDS)
+    return {"user": user}
+
+
+@app.post("/api/auth/logout")
+def auth_logout(request: Request, response: Response) -> dict:
+    auth.logout(request.cookies.get(auth.COOKIE_NAME))
+    _set_session_cookie(request, response, "", 0)
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def auth_me(user: dict = Depends(require_user)) -> dict:
+    return {"user": user}
+
+
 @app.post("/api/simulate")
-def simulate_endpoint(payload: SimulateRequest) -> dict:
+def simulate_endpoint(
+    payload: SimulateRequest,
+    _user: dict = Depends(require_user),
+) -> dict:
     if not payload.compounds:
         raise HTTPException(status_code=400, detail="至少选择一个组分")
     try:
@@ -88,7 +143,10 @@ def simulate_endpoint(payload: SimulateRequest) -> dict:
 
 
 @app.post("/api/recommend")
-def recommend_endpoint(payload: RecommendRequest) -> dict:
+def recommend_endpoint(
+    payload: RecommendRequest,
+    _user: dict = Depends(require_user),
+) -> dict:
     if not payload.compounds:
         raise HTTPException(status_code=400, detail="至少选择一个组分")
     if len(payload.compounds) > 20:
@@ -100,7 +158,10 @@ def recommend_endpoint(payload: RecommendRequest) -> dict:
 
 
 @app.post("/api/identify")
-def identify_endpoint(payload: IdentifyRequest) -> dict:
+def identify_endpoint(
+    payload: IdentifyRequest,
+    _user: dict = Depends(require_user),
+) -> dict:
     if not payload.observed_peaks:
         raise HTTPException(status_code=400, detail="至少提供一个观测峰")
     try:
@@ -122,7 +183,7 @@ def ai_status_with_config(payload: AITestRequest) -> dict:
 
 
 @app.post("/api/ai/test")
-def ai_test(payload: AITestRequest) -> dict:
+def ai_test(payload: AITestRequest, _user: dict = Depends(require_user)) -> dict:
     config = ai_client.resolve_config(payload.model_dump())
     if not config["configured"]:
         raise HTTPException(status_code=400, detail="请先填写 API Key")

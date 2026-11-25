@@ -4,6 +4,7 @@
 
 - **色谱模拟**：给定组分与色谱条件（色谱柱、流动相、流速、pH、温度、梯度、检测波长），基于保留模型预测并可视化色谱图、峰表与系统适用性指标。
 - **AI 条件设计**：给定组分，由 LLM 生成可上机的色谱条件，并强制通过物理模型复核；未配置模型时自动使用内置规则专家系统。
+- **用户系统**：注册 / 登录后使用平台；密码以 scrypt 加盐哈希存储，会话通过 HttpOnly Cookie 维持。
 
 ## 快速开始
 
@@ -23,6 +24,8 @@ export HOST=0.0.0.0 PORT=8000
 ```
 
 任何兼容 `/chat/completions` 的服务均可使用（OpenAI、DeepSeek、Moonshot、通义千问兼容模式、本地 vLLM/Ollama 网关等）。
+
+账号数据保存为 JSON 文件，路径由 `CHROM_USER_DB` 指定，缺省位于系统临时目录。部署实例的临时目录可能在重新部署后重置，此时需要重新注册。
 
 ## 科学模型
 
@@ -66,6 +69,10 @@ log10 k = log10 k_ref − S_np · (φ − 0.10)
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `GET` | `/api/health` | 健康检查 |
+| `POST` | `/api/auth/register` | 注册并自动登录 |
+| `POST` | `/api/auth/login` | 登录 |
+| `POST` | `/api/auth/logout` | 退出登录 |
+| `GET` | `/api/auth/me` | 当前登录用户 |
 | `GET` | `/api/compounds` | 内置化合物库与分类 |
 | `GET` | `/api/compounds/search` | 本地 + PubChem 动态化合物搜索 |
 | `POST` | `/api/simulate` | 条件 → 色谱图数据 |
