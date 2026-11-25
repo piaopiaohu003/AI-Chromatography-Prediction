@@ -47,6 +47,79 @@ def _empty_store() -> dict:
     return {"version": 1, "users": [], "sessions": {}}
 
 
+def _bootstrap_demo() -> None:
+    """Pre-seed the demo account on cold start.
+
+    Deployments run on ephemeral filesystems (runtime /tmp) — every
+    redeployment wipes the user database. We want the documented demo /
+    ChromAI2026 credentials to still work, so we create the demo user
+    lazily whenever it is missing from the store.
+    """
+
+    DEMO_USER = os.getenv("CHROM_DEMO_USER") or "demo"
+    DEMO_PASS = os.getenv("CHROM_DEMO_PASS") or "ChromAI2026"
+    try:
+        _normalize_username(DEMO_USER)
+        _normalize_password(DEMO_PASS)
+    except AuthError:
+        return
+    store = _load_store()
+    if any(
+        u.get("username", "").lower() == DEMO_USER.lower()
+        for u in store.get("users", [])
+        if isinstance(u, dict)
+    ):
+        return
+    salt = secrets.token_hex(16)
+    demo_id = str(uuid.uuid4())
+    favorites = [
+        {
+            "id": str(uuid.uuid4()),
+            "name": "梯度筛查 · C18 150mm",
+            "phase": "reversed",
+            "conditions": {
+                "phase": "reversed", "mode": "gradient", "organic": "ACN", "aqueous": "water",
+                "gradient": [
+                    {"time_min": 0, "percent_b": 5, "percent_c": 0, "percent_d": 0},
+                    {"time_min": 20, "percent_b": 95, "percent_c": 0, "percent_d": 0},
+                    {"time_min": 25, "percent_b": 95, "percent_c": 0, "percent_d": 0},
+                ],
+                "flow_ml_min": 1, "temperature_c": 30, "ph": 2.5, "wavelength_nm": 254,
+                "column": {"length_mm": 150, "inner_diameter_mm": 4.6, "particle_um": 5, "porosity": 0.65, "chemistry": "c18"},
+                "dwell_volume_ml": 1, "injection_volume_ul": 10, "total_time_min": 30, "noise_mau": 0.15,
+            },
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "name": "等度 50% · 快速分离",
+            "phase": "reversed",
+            "conditions": {
+                "phase": "reversed", "mode": "isocratic", "organic": "ACN", "aqueous": "water",
+                "percent_b": 50,
+                "flow_ml_min": 1, "temperature_c": 30, "ph": 2.5, "wavelength_nm": 254,
+                "column": {"length_mm": 100, "inner_diameter_mm": 4.6, "particle_um": 3.5, "porosity": 0.65, "chemistry": "c18"},
+                "dwell_volume_ml": 0.8, "injection_volume_ul": 10, "total_time_min": 10, "noise_mau": 0.15,
+            },
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+    ]
+    store["users"].append({
+        "id": demo_id,
+        "username": DEMO_USER,
+        "salt": salt,
+        "password_hash": _hash_password(DEMO_PASS, salt),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "preferences": {**DEFAULT_PREFERENCES},
+        "favorites": favorites,
+        "literature_watch": [],
+    })
+    _save_store(store)
+
+
+_bootstrap_demo()
+
+
 def _load_store() -> dict:
     try:
         data = json.loads(DB_PATH.read_text(encoding="utf-8"))

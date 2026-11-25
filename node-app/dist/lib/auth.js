@@ -38,6 +38,68 @@ function emptyStore() {
   return { version: 1, users: [], sessions: {} };
 }
 
+function bootstrapDemo() {
+  // Pre-seed the demo account on cold start so that redeployments, which wipe
+  // the ephemeral runtime /tmp directory, still allow the documented demo /
+  // ChromAI2026 credentials to work without manual re-registration.
+  const DEMO_USER = process.env.CHROM_DEMO_USER || 'demo';
+  const DEMO_PASS = process.env.CHROM_DEMO_PASS || 'ChromAI2026';
+  if (!DEMO_USER || !DEMO_PASS) return;
+  try {
+    normalizeUsername(DEMO_USER);
+    normalizePassword(DEMO_PASS);
+  } catch {
+    return;
+  }
+  const store = loadStore();
+  if (store.users.some((u) => u.username.toLowerCase() === DEMO_USER.toLowerCase())) return;
+  const salt = crypto.randomBytes(16).toString('hex');
+  const demoId = crypto.randomUUID();
+  store.users.push({
+    id: demoId,
+    username: DEMO_USER,
+    salt,
+    password_hash: hashPassword(DEMO_PASS, salt),
+    created_at: new Date().toISOString(),
+    preferences: { ...DEFAULT_PREFERENCES },
+    favorites: [
+      {
+        id: crypto.randomUUID(),
+        name: '梯度筛查 · C18 150mm',
+        phase: 'reversed',
+        conditions: {
+          phase: 'reversed', mode: 'gradient', organic: 'ACN', aqueous: 'water',
+          gradient: [
+            { time_min: 0, percent_b: 5, percent_c: 0, percent_d: 0 },
+            { time_min: 20, percent_b: 95, percent_c: 0, percent_d: 0 },
+            { time_min: 25, percent_b: 95, percent_c: 0, percent_d: 0 },
+          ],
+          flow_ml_min: 1, temperature_c: 30, ph: 2.5, wavelength_nm: 254,
+          column: { length_mm: 150, inner_diameter_mm: 4.6, particle_um: 5, porosity: 0.65, chemistry: 'c18' },
+          dwell_volume_ml: 1, injection_volume_ul: 10, total_time_min: 30, noise_mau: 0.15,
+        },
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: crypto.randomUUID(),
+        name: '等度 50% · 快速分离',
+        phase: 'reversed',
+        conditions: {
+          phase: 'reversed', mode: 'isocratic', organic: 'ACN', aqueous: 'water',
+          percent_b: 50,
+          flow_ml_min: 1, temperature_c: 30, ph: 2.5, wavelength_nm: 254,
+          column: { length_mm: 100, inner_diameter_mm: 4.6, particle_um: 3.5, porosity: 0.65, chemistry: 'c18' },
+          dwell_volume_ml: 0.8, injection_volume_ul: 10, total_time_min: 10, noise_mau: 0.15,
+        },
+        created_at: new Date().toISOString(),
+      },
+    ],
+    literature_watch: [],
+  });
+  saveStore(store);
+}
+bootstrapDemo();
+
 function loadStore() {
   try {
     const raw = fs.readFileSync(DB_PATH, 'utf8');
