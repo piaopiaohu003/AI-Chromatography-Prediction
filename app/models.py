@@ -111,6 +111,24 @@ class ObservedPeak(BaseModel):
     lambda_max_nm: Optional[float] = Field(None, ge=180.0, le=800.0)
 
 
+class PreferencesPayload(BaseModel):
+    default_phase: str = "reversed"
+    default_organic: str = "ACN"
+    default_detector: str = "UV"
+    default_temperature_c: float = 30.0
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class FavoriteRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=40)
+    phase: str = "reversed"
+    conditions: dict
+
+
 class IdentifyRequest(BaseModel):
     conditions: Conditions
     observed_peaks: List[ObservedPeak] = Field(..., min_length=1, max_length=20)

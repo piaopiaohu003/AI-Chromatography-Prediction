@@ -6,6 +6,7 @@
 - **流动相自定义**：A 相（水 / 缓冲水相 / 正己烷 / 正庚烷 / 环己烷）与 B 相（ACN / MeOH / IPA / EtOAc / THF / EtOH）均可选择，也支持输入自定义溶剂名称。
 - **AI 条件设计**：给定组分，由 LLM 生成可上机的色谱条件，并强制通过物理模型复核；未配置模型时自动使用内置规则专家系统。
 - **用户系统**：注册 / 登录后使用平台；密码以 scrypt 加盐哈希存储，会话通过 HttpOnly Cookie 维持。
+- **账户设置**：可保存默认色谱模式 / 有机相 / 检测器 / 柱温偏好、修改密码（并注销其他设备会话），以及收藏当前色谱条件并一键恢复。
 
 ## 快速开始
 
@@ -75,6 +76,11 @@ log10 k = log10 k_ref − S_np · (φ − 0.10)
 | `POST` | `/api/auth/login` | 登录 |
 | `POST` | `/api/auth/logout` | 退出登录 |
 | `GET` | `/api/auth/me` | 当前登录用户 |
+| `GET` | `/api/account` | 账户偏好与收藏列表 |
+| `PUT` | `/api/account/preferences` | 保存偏好设置 |
+| `POST` | `/api/account/password` | 修改密码 |
+| `POST` | `/api/account/favorites` | 收藏当前色谱条件 |
+| `DELETE` | `/api/account/favorites/{id}` | 删除收藏 |
 | `GET` | `/api/compounds` | 内置化合物库与分类 |
 | `GET` | `/api/compounds/search` | 本地 + PubChem 动态化合物搜索 |
 | `POST` | `/api/simulate` | 条件 → 色谱图数据 |

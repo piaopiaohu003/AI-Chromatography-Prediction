@@ -72,6 +72,12 @@
         <div class="user-chip hidden" id="user-chip">
           <span class="user-avatar" id="user-avatar">C</span>
           <span class="user-name" id="user-name">—</span>
+          <button class="icon-btn" id="btn-account" title="账户设置" aria-label="账户设置">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+              <circle cx="12" cy="8" r="3.4"/>
+              <path d="M5 20c.7-3.6 3.5-5.4 7-5.4s6.3 1.8 7 5.4"/>
+            </svg>
+          </button>
           <button class="icon-btn" id="btn-logout" title="退出登录" aria-label="退出登录">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
               <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/>
@@ -378,6 +384,84 @@
         <div class="spacer"></div>
         <button class="ghost-btn" id="btn-ai-test">测试连接</button>
         <button class="primary-btn small" id="btn-ai-save">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= ACCOUNT MODAL ======================= -->
+  <div class="modal hidden" id="modal-account">
+    <div class="modal-backdrop" data-close="account"></div>
+    <div class="modal-panel wide">
+      <div class="modal-head">
+        <div>
+          <h3>账户设置</h3>
+          <p id="account-subtitle">管理偏好、密码与收藏</p>
+        </div>
+        <button class="icon-btn ghost" data-close="account" aria-label="关闭">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="segmented account-tabs" id="account-tabs">
+          <button type="button" data-account-tab="prefs" class="active">偏好设置</button>
+          <button type="button" data-account-tab="security">密码安全</button>
+          <button type="button" data-account-tab="favorites">我的收藏</button>
+        </div>
+
+        <section class="account-section" id="account-prefs">
+          <div class="field">
+            <div class="field-head"><label>默认色谱模式</label></div>
+            <div class="segmented" id="pref-phase">
+              <button data-value="reversed">反相 RPLC</button>
+              <button data-value="normal">正相 NPLC</button>
+            </div>
+          </div>
+          <div class="field">
+            <div class="field-head"><label>默认有机相</label></div>
+            <div class="segmented" id="pref-organic"></div>
+          </div>
+          <div class="field">
+            <div class="field-head"><label>默认检测器</label></div>
+            <div class="segmented" id="pref-detector">
+              <button data-value="UV">UV / DAD</button>
+              <button data-value="MS">LC-MS</button>
+            </div>
+          </div>
+          <div class="field">
+            <div class="field-head"><label for="pref-temperature">默认柱温</label><output id="pref-temperature-out">30 °C</output></div>
+            <input type="range" id="pref-temperature" min="15" max="60" step="1" value="30">
+          </div>
+          <p class="hint">偏好会在登录时作为默认条件，也可随时应用到当前条件。</p>
+          <div class="account-actions">
+            <button class="ghost-btn" id="btn-pref-apply">应用到当前条件</button>
+            <button class="primary-btn small" id="btn-pref-save">保存偏好</button>
+          </div>
+        </section>
+
+        <section class="account-section hidden" id="account-security">
+          <label class="stack-label">当前密码
+            <input type="password" id="pwd-current" autocomplete="current-password">
+          </label>
+          <label class="stack-label">新密码
+            <input type="password" id="pwd-new" autocomplete="new-password">
+          </label>
+          <label class="stack-label">确认新密码
+            <input type="password" id="pwd-confirm" autocomplete="new-password">
+          </label>
+          <div class="pwd-meter"><i id="pwd-meter-bar"></i></div>
+          <p class="hint" id="pwd-hint">至少 8 位，建议包含大小写字母、数字与符号。</p>
+          <div class="account-actions">
+            <button class="primary-btn small" id="btn-pwd-save">修改密码</button>
+          </div>
+        </section>
+
+        <section class="account-section hidden" id="account-favorites">
+          <div class="favorite-create">
+            <input type="text" id="favorite-name" maxlength="40" placeholder="为当前色谱条件命名">
+            <button class="primary-btn small" id="btn-favorite-add">收藏当前条件</button>
+          </div>
+          <div class="favorite-list" id="favorite-list"></div>
+        </section>
       </div>
     </div>
   </div>

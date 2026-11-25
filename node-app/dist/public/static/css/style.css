@@ -998,6 +998,81 @@ input[type="range"]::-moz-range-thumb {
 }
 .custom-solvent.hidden { display: none; }
 
+/* ---------------- account settings ---------------- */
+.account-tabs { margin-bottom: 16px; }
+.account-section { display: flex; flex-direction: column; gap: 14px; }
+.account-section.hidden { display: none; }
+.account-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.pwd-meter {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+.pwd-meter i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: #ef4444;
+  transition: width 0.2s ease, background 0.2s ease;
+}
+.favorite-create { display: flex; gap: 8px; }
+.favorite-create input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 11px;
+  background: rgba(8, 14, 19, 0.72);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  font-size: 12px;
+}
+.favorite-create input:focus {
+  outline: none;
+  border-color: var(--teal-dim);
+}
+.favorite-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.favorite-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.favorite-main { flex: 1; min-width: 0; }
+.favorite-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.favorite-meta { margin-top: 3px; font-size: 10.5px; color: var(--text-dim); }
+.favorite-btns { display: flex; gap: 6px; }
+.favorite-empty {
+  padding: 22px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+
 /* ---------------- auth ---------------- */
 .auth-gate {
   position: fixed;

@@ -15,7 +15,10 @@ from .pubchem import search_online
 from .models import (
     AITestRequest,
     AuthRequest,
+    FavoriteRequest,
     IdentifyRequest,
+    PasswordChangeRequest,
+    PreferencesPayload,
     RecommendRequest,
     SimulateRequest,
 )
@@ -126,6 +129,61 @@ def auth_logout(request: Request, response: Response) -> dict:
 @app.get("/api/auth/me")
 def auth_me(user: dict = Depends(require_user)) -> dict:
     return {"user": user}
+
+
+@app.get("/api/account")
+def account_get(user: dict = Depends(require_user)) -> dict:
+    return auth.get_account(user["id"])
+
+
+@app.put("/api/account/preferences")
+def account_preferences(
+    payload: PreferencesPayload,
+    user: dict = Depends(require_user),
+) -> dict:
+    return {
+        "preferences": auth.update_preferences(user["id"], payload.model_dump())
+    }
+
+
+@app.post("/api/account/password")
+def account_password(
+    payload: PasswordChangeRequest,
+    request: Request,
+    user: dict = Depends(require_user),
+) -> dict:
+    try:
+        auth.change_password(
+            user["id"],
+            request.cookies.get(auth.COOKIE_NAME),
+            payload.current_password,
+            payload.new_password,
+        )
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+    return {"ok": True}
+
+
+@app.post("/api/account/favorites")
+def account_favorite_add(
+    payload: FavoriteRequest,
+    user: dict = Depends(require_user),
+) -> dict:
+    try:
+        return auth.add_favorite(user["id"], payload.model_dump())
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+
+
+@app.delete("/api/account/favorites/{favorite_id}")
+def account_favorite_delete(
+    favorite_id: str,
+    user: dict = Depends(require_user),
+) -> dict:
+    try:
+        return auth.delete_favorite(user["id"], favorite_id)
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
 
 
 @app.post("/api/simulate")

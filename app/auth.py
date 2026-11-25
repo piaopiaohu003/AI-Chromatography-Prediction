@@ -20,6 +20,17 @@ DB_PATH = Path(
     or (Path(tempfile.gettempdir()) / "chromai-users.json")
 )
 USERNAME_RE = re.compile(r"^[\w\u4e00-\u9fa5.-]{3,24}$", re.UNICODE)
+DEFAULT_PREFERENCES = {
+    "default_phase": "reversed",
+    "default_organic": "ACN",
+    "default_detector": "UV",
+    "default_temperature_c": 30,
+}
+PHASE_ORGANICS = {
+    "reversed": ["ACN", "MeOH", "THF", "EtOH"],
+    "normal": ["IPA", "EtOAc", "THF", "EtOH"],
+}
+MAX_FAVORITES = 30
 
 
 class AuthError(Exception):
@@ -120,6 +131,8 @@ def register(username_value: object, password_value: object) -> tuple[dict, str]
         "salt": salt,
         "password_hash": _hash_password(password, salt),
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
+        "preferences": dict(DEFAULT_PREFERENCES),
+        "favorites": [],
     }
     store["users"].append(user)
     token = _issue_session(store, user["id"])
@@ -170,3 +183,129 @@ def logout(token: Optional[str]) -> None:
     store = _load_store()
     if store["sessions"].pop(token, None) is not None:
         _save_store(store)
+
+
+def _ensure_account(user: dict) -> dict:
+    if not isinstance(user.get("preferences"), dict):
+        user["preferences"] = dict(DEFAULT_PREFERENCES)
+    else:
+        merged = dict(DEFAULT_PREFERENCES)
+        merged.update(user["preferences"])
+        user["preferences"] = merged
+    if not isinstance(user.get("favorites"), list):
+        user["favorites"] = []
+    return user
+
+
+def _find_user(store: dict, user_id: str) -> dict:
+    user = next((item for item in store["users"] if item["id"] == user_id), None)
+    if not user:
+        raise AuthError("用户不存在", 404)
+    return _ensure_account(user)
+
+
+def _normalize_preferences(patch: object) -> dict:
+    if not isinstance(patch, dict):
+        raise AuthError("偏好设置格式不正确")
+    phase = patch.get("default_phase")
+    if phase not in PHASE_ORGANICS:
+        phase = DEFAULT_PREFERENCES["default_phase"]
+    options = PHASE_ORGANICS[phase]
+    organic = patch.get("default_organic")
+    if organic not in options:
+        organic = options[0]
+    detector = patch.get("default_detector")
+    if detector not in ("UV", "MS"):
+        detector = DEFAULT_PREFERENCES["default_detector"]
+    try:
+        temperature = int(round(float(patch.get("default_temperature_c", 30))))
+    except (TypeError, ValueError):
+        temperature = DEFAULT_PREFERENCES["default_temperature_c"]
+    temperature = max(15, min(60, temperature))
+    return {
+        "default_phase": phase,
+        "default_organic": organic,
+        "default_detector": detector,
+        "default_temperature_c": temperature,
+    }
+
+
+def get_account(user_id: str) -> dict:
+    store = _load_store()
+    user = _find_user(store, user_id)
+    return {
+        "user": _public_user(user),
+        "preferences": dict(user["preferences"]),
+        "favorites": [dict(item) for item in user["favorites"]],
+    }
+
+
+def update_preferences(user_id: str, patch: object) -> dict:
+    preferences = _normalize_preferences(patch)
+    store = _load_store()
+    user = _find_user(store, user_id)
+    user["preferences"] = preferences
+    _save_store(store)
+    return dict(preferences)
+
+
+def change_password(
+    user_id: str,
+    current_token: Optional[str],
+    current_password: object,
+    new_password: object,
+) -> None:
+    store = _load_store()
+    user = _find_user(store, user_id)
+    given = str(current_password) if current_password is not None else ""
+    if not secrets.compare_digest(user["password_hash"], _hash_password(given, user["salt"])):
+        raise AuthError("当前密码不正确")
+    password = _normalize_password(new_password)
+    if password == given:
+        raise AuthError("新密码不能与当前密码相同")
+    salt = secrets.token_hex(16)
+    user["salt"] = salt
+    user["password_hash"] = _hash_password(password, salt)
+    for token in list(store["sessions"]):
+        session = store["sessions"].get(token) or {}
+        if session.get("user_id") == user_id and token != current_token:
+            store["sessions"].pop(token, None)
+    _save_store(store)
+
+
+def add_favorite(user_id: str, payload: object) -> dict:
+    if not isinstance(payload, dict):
+        raise AuthError("收藏内容格式不正确")
+    name = str(payload.get("name") or "").strip()
+    if not name or len(name) > 40:
+        raise AuthError("收藏名称需为 1–40 个字符")
+    conditions = payload.get("conditions")
+    if not isinstance(conditions, dict):
+        raise AuthError("缺少色谱条件")
+    if len(json.dumps(conditions, ensure_ascii=False)) > 60000:
+        raise AuthError("收藏的色谱条件过大")
+    store = _load_store()
+    user = _find_user(store, user_id)
+    if len(user["favorites"]) >= MAX_FAVORITES:
+        raise AuthError(f"最多保存 {MAX_FAVORITES} 个收藏")
+    favorite = {
+        "id": str(uuid.uuid4()),
+        "name": name,
+        "phase": "normal" if payload.get("phase") == "normal" else "reversed",
+        "conditions": conditions,
+        "created_at": datetime.now(tz=timezone.utc).isoformat(),
+    }
+    user["favorites"].insert(0, favorite)
+    _save_store(store)
+    return {"favorite": dict(favorite)}
+
+
+def delete_favorite(user_id: str, favorite_id: str) -> dict:
+    store = _load_store()
+    user = _find_user(store, user_id)
+    for index, item in enumerate(user["favorites"]):
+        if item.get("id") == favorite_id:
+            user["favorites"].pop(index)
+            _save_store(store)
+            return {"ok": True, "id": favorite_id}
+    raise AuthError("收藏不存在", 404)

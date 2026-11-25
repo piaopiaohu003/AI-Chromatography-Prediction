@@ -211,6 +211,51 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, 200, { user });
   }
 
+  const accountPaths = [
+    '/api/account',
+    '/api/account/preferences',
+    '/api/account/password',
+    '/api/account/favorites',
+  ];
+  const isFavoriteDelete = pathname.startsWith('/api/account/favorites/');
+  if (accountPaths.includes(pathname) || isFavoriteDelete) {
+    const user = auth.currentUser(readCookie(req, auth.COOKIE_NAME));
+    if (!user) {
+      return sendError(res, 401, '请先登录');
+    }
+    try {
+      if (pathname === '/api/account' && method === 'GET') {
+        return sendJson(res, 200, auth.getAccount(user.id));
+      }
+      if (pathname === '/api/account/preferences' && method === 'PUT') {
+        const body = await readJsonBody(req);
+        return sendJson(res, 200, {
+          preferences: auth.updatePreferences(user.id, body),
+        });
+      }
+      if (pathname === '/api/account/password' && method === 'POST') {
+        const body = await readJsonBody(req);
+        const token = readCookie(req, auth.COOKIE_NAME);
+        auth.changePassword(user.id, token, body.current_password, body.new_password);
+        return sendJson(res, 200, { ok: true });
+      }
+      if (pathname === '/api/account/favorites' && method === 'POST') {
+        const body = await readJsonBody(req);
+        return sendJson(res, 200, auth.addFavorite(user.id, body));
+      }
+      if (isFavoriteDelete && method === 'DELETE') {
+        const favoriteId = pathname.split('/').pop();
+        return sendJson(res, 200, auth.deleteFavorite(user.id, favoriteId));
+      }
+      return sendError(res, 405, 'Method Not Allowed');
+    } catch (err) {
+      if (err instanceof auth.AuthError) {
+        return sendError(res, err.status, err.message);
+      }
+      throw err;
+    }
+  }
+
   const protectedPaths = [
     '/api/simulate',
     '/api/recommend',

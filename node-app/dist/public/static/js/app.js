@@ -224,6 +224,13 @@ const COLUMN_CHEMISTRY_LABELS = {
 
 const DEFAULT_IDS = ["benzoic-acid", "acetaminophen", "caffeine", "ibuprofen"];
 
+const DEFAULT_PREFERENCES = {
+  default_phase: "reversed",
+  default_organic: "ACN",
+  default_detector: "UV",
+  default_temperature_c: 30,
+};
+
 const state = {
   library: [],
   categories: [],
@@ -242,6 +249,10 @@ const state = {
   librarySearch: "",
   onlineLibrary: [],
   user: null,
+  account: {
+    preferences: { ...DEFAULT_PREFERENCES },
+    favorites: [],
+  },
 };
 
 const charts = { sim: null, ai: null };
@@ -377,6 +388,7 @@ function bindAuth() {
   });
   $("#auth-form").addEventListener("submit", submitAuth);
   $("#btn-logout").addEventListener("click", logout);
+  $("#btn-account").addEventListener("click", openAccount);
 }
 
 function setAuthMode(mode) {
@@ -465,6 +477,7 @@ async function submitAuth(event) {
     $("#auth-password").value = "";
     $("#auth-confirm").value = "";
     await startApp();
+    applyPreferences(state.account.preferences, { silent: true });
     toast(`${authMode === "register" ? "注册" : "登录"}成功，欢迎 ${state.user.username}`, "ok");
   } catch (err) {
     showAuthError(err.message);
@@ -490,6 +503,323 @@ async function logout() {
     await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
   } catch (_) { /* ignore */ }
   window.location.reload();
+}
+
+/* ------------------------------------------------------------------ */
+/* account settings                                                    */
+/* ------------------------------------------------------------------ */
+
+let accountTab = "prefs";
+
+async function apiJSON(path, method = "GET", body) {
+  const options = { method, credentials: "same-origin", headers: {} };
+  if (body !== undefined) {
+    options.headers["Content-Type"] = "application/json";
+    options.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, options);
+  let data = {};
+  try { data = await res.json(); } catch (_) { /* ignore */ }
+  if (!res.ok) {
+    throw new Error(typeof data.detail === "string" ? data.detail : `请求失败（HTTP ${res.status}）`);
+  }
+  return data;
+}
+
+async function loadAccount() {
+  if (!state.user) return;
+  try {
+    const data = await apiJSON("/api/account");
+    state.account = {
+      preferences: { ...DEFAULT_PREFERENCES, ...(data.preferences || {}) },
+      favorites: Array.isArray(data.favorites) ? data.favorites : [],
+    };
+    renderFavorites();
+    syncPrefForm();
+  } catch (_) { /* keep local defaults */ }
+}
+
+function bindAccount() {
+  $("#account-tabs").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-account-tab]");
+    if (!button) return;
+    setAccountTab(button.dataset.accountTab);
+  });
+
+  $("#pref-phase").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-value]");
+    if (!button) return;
+    state.account.preferences.default_phase = button.dataset.value;
+    const options = ORGANIC_OPTIONS[button.dataset.value].filter((item) => item.value !== "custom");
+    if (!options.some((item) => item.value === state.account.preferences.default_organic)) {
+      state.account.preferences.default_organic = options[0].value;
+    }
+    renderPrefOrganic();
+    syncSegment("#pref-phase", state.account.preferences.default_phase);
+  });
+
+  $("#pref-organic").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-value]");
+    if (!button) return;
+    state.account.preferences.default_organic = button.dataset.value;
+    syncSegment("#pref-organic", state.account.preferences.default_organic);
+  });
+
+  $("#pref-detector").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-value]");
+    if (!button) return;
+    state.account.preferences.default_detector = button.dataset.value;
+    syncSegment("#pref-detector", state.account.preferences.default_detector);
+  });
+
+  const temperature = $("#pref-temperature");
+  temperature.addEventListener("input", () => {
+    state.account.preferences.default_temperature_c = Number(temperature.value);
+    $("#pref-temperature-out").textContent = `${temperature.value} °C`;
+  });
+
+  $("#btn-pref-save").addEventListener("click", async () => {
+    const button = $("#btn-pref-save");
+    button.disabled = true;
+    try {
+      const data = await apiJSON("/api/account/preferences", "PUT", state.account.preferences);
+      state.account.preferences = { ...DEFAULT_PREFERENCES, ...(data.preferences || {}) };
+      applyPreferences(state.account.preferences);
+      syncPrefForm();
+      toast("偏好设置已保存并应用", "ok");
+    } catch (err) {
+      toast(err.message, "err");
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $("#btn-pref-apply").addEventListener("click", () => {
+    applyPreferences(state.account.preferences);
+  });
+
+  $("#pwd-new").addEventListener("input", updatePasswordStrength);
+  $("#btn-pwd-save").addEventListener("click", async () => {
+    const current = $("#pwd-current").value;
+    const next = $("#pwd-new").value;
+    const confirm = $("#pwd-confirm").value;
+    if (!current || !next) {
+      toast("请填写当前密码和新密码", "err");
+      return;
+    }
+    if (next.length < 8 || next.length > 64) {
+      toast("新密码长度需为 8–64 位", "err");
+      return;
+    }
+    if (next !== confirm) {
+      toast("两次输入的新密码不一致", "err");
+      return;
+    }
+    const button = $("#btn-pwd-save");
+    button.disabled = true;
+    try {
+      await apiJSON("/api/account/password", "POST", {
+        current_password: current,
+        new_password: next,
+      });
+      $("#pwd-current").value = "";
+      $("#pwd-new").value = "";
+      $("#pwd-confirm").value = "";
+      updatePasswordStrength();
+      toast("密码已更新，其他设备上的登录已失效", "ok");
+    } catch (err) {
+      toast(err.message, "err");
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $("#btn-favorite-add").addEventListener("click", async () => {
+    const input = $("#favorite-name");
+    const name = input.value.trim();
+    if (!name) {
+      toast("请先为收藏命名", "err");
+      input.focus();
+      return;
+    }
+    const button = $("#btn-favorite-add");
+    button.disabled = true;
+    try {
+      const data = await apiJSON("/api/account/favorites", "POST", {
+        name,
+        phase: state.conditions.phase,
+        conditions: state.conditions,
+      });
+      if (data.favorite) state.account.favorites.unshift(data.favorite);
+      input.value = "";
+      renderFavorites();
+      toast("已收藏当前色谱条件", "ok");
+    } catch (err) {
+      toast(err.message, "err");
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $("#favorite-list").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-fav-action]");
+    if (!button) return;
+    const id = button.dataset.favId;
+    if (button.dataset.favAction === "apply") {
+      applyFavorite(id);
+      return;
+    }
+    if (button.dataset.favAction === "delete") {
+      button.disabled = true;
+      try {
+        await apiJSON(`/api/account/favorites/${id}`, "DELETE");
+        state.account.favorites = state.account.favorites.filter((item) => item.id !== id);
+        renderFavorites();
+        toast("收藏已删除", "ok");
+      } catch (err) {
+        button.disabled = false;
+        toast(err.message, "err");
+      }
+    }
+  });
+}
+
+function openAccount() {
+  if (!state.user) return;
+  setAccountTab(accountTab);
+  syncPrefForm();
+  renderFavorites();
+  const subtitle = $("#account-subtitle");
+  const created = state.user.created_at
+    ? new Date(state.user.created_at).toLocaleDateString("zh-CN")
+    : "";
+  subtitle.textContent = `${state.user.username}${created ? ` · 注册于 ${created}` : ""}`;
+  $("#modal-account").classList.remove("hidden");
+  loadAccount();
+}
+
+function setAccountTab(tab) {
+  accountTab = ["prefs", "security", "favorites"].includes(tab) ? tab : "prefs";
+  $$("#account-tabs button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.accountTab === accountTab);
+  });
+  ["prefs", "security", "favorites"].forEach((name) => {
+    $(`#account-${name}`).classList.toggle("hidden", name !== accountTab);
+  });
+}
+
+function renderPrefOrganic() {
+  const phase = state.account.preferences.default_phase === "normal" ? "normal" : "reversed";
+  const options = ORGANIC_OPTIONS[phase].filter((item) => item.value !== "custom");
+  if (!options.some((item) => item.value === state.account.preferences.default_organic)) {
+    state.account.preferences.default_organic = options[0].value;
+  }
+  $("#pref-organic").innerHTML = options
+    .map((item) => `<button data-value="${item.value}">${item.label}</button>`)
+    .join("");
+  syncSegment("#pref-organic", state.account.preferences.default_organic);
+}
+
+function syncPrefForm() {
+  const prefs = state.account.preferences;
+  renderPrefOrganic();
+  syncSegment("#pref-phase", prefs.default_phase);
+  syncSegment("#pref-detector", prefs.default_detector);
+  const temperature = $("#pref-temperature");
+  temperature.value = String(prefs.default_temperature_c);
+  $("#pref-temperature-out").textContent = `${prefs.default_temperature_c} °C`;
+}
+
+function applyPreferences(preferences, { silent = false } = {}) {
+  if (!preferences) return;
+  const phase = preferences.default_phase === "normal" ? "normal" : "reversed";
+  const options = ORGANIC_OPTIONS[phase].filter((item) => item.value !== "custom");
+  const organic = options.some((item) => item.value === preferences.default_organic)
+    ? preferences.default_organic
+    : options[0].value;
+  const temperature = Math.max(15, Math.min(60, Number(preferences.default_temperature_c) || 30));
+  state.conditions.phase = phase;
+  state.conditions.organic = organic;
+  state.conditions.aqueous = phase === "normal" ? "hexane" : "water";
+  state.conditions.temperature_c = temperature;
+  const allowedChemistry = phase === "normal" ? ["silica", "diol", "amino"] : ["c18"];
+  if (!allowedChemistry.includes(state.conditions.column.chemistry)) {
+    state.conditions.column.chemistry = phase === "normal" ? "silica" : "c18";
+  }
+  state.aiConstraints.detector = preferences.default_detector === "MS" ? "MS" : "UV";
+  syncControls();
+  persist();
+  scheduleSim(0);
+  if (!silent) toast("偏好已应用到当前条件", "ok");
+}
+
+function updatePasswordStrength() {
+  const value = $("#pwd-new").value;
+  let score = 0;
+  if (value.length >= 8) score += 1;
+  if (value.length >= 12) score += 1;
+  if (/[a-z]/.test(value) && /[A-Z]/.test(value)) score += 1;
+  if (/\d/.test(value)) score += 1;
+  if (/[^A-Za-z0-9]/.test(value)) score += 1;
+  score = Math.min(4, score);
+  const colors = ["#ef4444", "#f59e0b", "#eab308", "#22c55e"];
+  const labels = ["弱", "一般", "较好", "强"];
+  const bar = $("#pwd-meter-bar");
+  bar.style.width = value ? `${score * 25}%` : "0%";
+  bar.style.background = colors[Math.max(0, score - 1)] || colors[0];
+  $("#pwd-hint").textContent = value
+    ? `密码强度：${labels[Math.max(0, score - 1)] || "弱"}（至少 8 位）`
+    : "至少 8 位，建议包含大小写字母、数字与符号。";
+}
+
+function renderFavorites() {
+  const list = $("#favorite-list");
+  if (!list) return;
+  if (!state.account.favorites.length) {
+    list.innerHTML = `<div class="favorite-empty">还没有收藏。命名并收藏当前条件后，可在这里一键恢复。</div>`;
+    return;
+  }
+  list.innerHTML = state.account.favorites.map((item) => {
+    const phaseLabel = item.phase === "normal" ? "正相 NPLC" : "反相 RPLC";
+    const conditions = item.conditions || {};
+    const solvent = solventLabel(
+      conditions.organic,
+      conditions.organic_label,
+      ORGANIC_NAMES,
+      phaseLabel,
+    );
+    const date = item.created_at
+      ? new Date(item.created_at).toLocaleString("zh-CN", {
+        month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+      })
+      : "";
+    return `
+      <div class="favorite-item">
+        <div class="favorite-main">
+          <div class="favorite-name">${escapeHtml(item.name)}</div>
+          <div class="favorite-meta">${phaseLabel} · ${escapeHtml(solvent)}${date ? ` · ${date}` : ""}</div>
+        </div>
+        <div class="favorite-btns">
+          <button class="mini-btn" data-fav-action="apply" data-fav-id="${item.id}">应用</button>
+          <button class="mini-btn" data-fav-action="delete" data-fav-id="${item.id}">删除</button>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function applyFavorite(id) {
+  const favorite = state.account.favorites.find((item) => item.id === id);
+  if (!favorite) return;
+  const merged = deepMerge(DEFAULT_CONDITIONS(), favorite.conditions || {});
+  if (!Array.isArray(merged.gradient) || merged.gradient.length < 2) {
+    merged.gradient = DEFAULT_CONDITIONS().gradient;
+  }
+  state.conditions = merged;
+  syncControls();
+  persist();
+  scheduleSim(0);
+  $("#modal-account").classList.add("hidden");
+  toast(`已应用收藏「${favorite.name}」`, "ok");
 }
 
 /* ------------------------------------------------------------------ */
@@ -535,6 +865,8 @@ async function startApp() {
   bindSettings();
   bindLibrary();
   bindExport();
+  bindAccount();
+  await loadAccount();
 
   charts.sim = new ChromatogramChart($("#chrom"), $("#sim-chart-wrap"), $("#sim-chart-tip"));
 
