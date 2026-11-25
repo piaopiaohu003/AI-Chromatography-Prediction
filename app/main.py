@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from . import ai_client
 from .compounds import CATEGORIES, COMPOUNDS
 from .identify import identify
+from .pubchem import search_online
 from .models import (
     AITestRequest,
     IdentifyRequest,
@@ -37,9 +38,37 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+def _search_local_compounds(query: str, limit: int = 12) -> list[dict]:
+    if not query:
+        return COMPOUNDS[:limit]
+    needle = query.lower()
+    return [
+        item for item in COMPOUNDS
+        if needle in (
+            f"{item['name']} {item.get('name_en', '')} {item['id']} {item.get('category', '')}"
+        ).lower()
+    ][:limit]
+
+
 @app.get("/api/compounds")
 def compounds() -> dict:
     return {"compounds": COMPOUNDS, "categories": CATEGORIES}
+
+
+@app.get("/api/compounds/search")
+def compound_search(q: str = "", limit: int = 6) -> dict:
+    query = q.strip()
+    local = _search_local_compounds(query)
+    if len(query) < 2:
+        return {"query": query, "local": local, "online": [], "online_error": None}
+    limit = max(1, min(10, limit))
+    try:
+        online = search_online(query, limit)
+        error = None
+    except Exception as exc:  # noqa: BLE001 - online lookup is optional
+        online = []
+        error = str(exc)
+    return {"query": query, "local": local, "online": online, "online_error": error}
 
 
 @app.get("/api/health")

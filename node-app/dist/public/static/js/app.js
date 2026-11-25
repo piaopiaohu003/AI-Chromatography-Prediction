@@ -160,11 +160,15 @@ const state = {
   librarySelection: new Set(),
   libraryCategory: "全部",
   librarySearch: "",
+  onlineLibrary: [],
 };
 
 const charts = { sim: null, ai: null };
 let simTimer = null;
 let simAbort = null;
+let libraryTimer = null;
+let libraryAbort = null;
+let librarySeq = 0;
 let lastAiError = "";
 
 /* ------------------------------------------------------------------ */
@@ -1194,8 +1198,10 @@ function setSettingsStatus(text, kind) {
 function bindLibrary() {
   $("#btn-add-compound").addEventListener("click", openLibrary);
   $("#library-search").addEventListener("input", (event) => {
-    state.librarySearch = event.target.value.trim().toLowerCase();
+    const query = event.target.value.trim();
+    state.librarySearch = query.toLowerCase();
     renderLibrary();
+    scheduleLibrarySearch(query);
   });
   $("#library-categories").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-category]");
@@ -1218,18 +1224,26 @@ function bindLibrary() {
       return;
     }
     let added = 0;
+    let estimated = 0;
     state.librarySelection.forEach((id) => {
       if (state.compounds.some((c) => c.id === id)) return;
-      const item = state.library.find((c) => c.id === id);
+      const item = state.library.find((c) => c.id === id)
+        || state.onlineLibrary.find((c) => c.id === id);
       if (item) {
         state.compounds.push({ ...item, concentration_mg_l: 100 });
         added += 1;
+        if (item.estimated) estimated += 1;
       }
     });
     state.librarySelection.clear();
     $("#modal-library").classList.add("hidden");
     onCompoundsChanged();
-    toast(`已添加 ${added} 个组分`, "ok");
+    toast(
+      estimated
+        ? `已添加 ${added} 个组分，其中 ${estimated} 个在线参数为估算值`
+        : `已添加 ${added} 个组分`,
+      "ok",
+    );
   });
   $("#btn-add-custom").addEventListener("click", addCustomCompound);
 }
@@ -1238,10 +1252,60 @@ function openLibrary() {
   state.librarySelection.clear();
   state.libraryCategory = "全部";
   state.librarySearch = "";
+  state.onlineLibrary = [];
+  clearTimeout(libraryTimer);
+  if (libraryAbort) libraryAbort.abort();
   $("#library-search").value = "";
+  setLibraryStatus("");
   renderCategoryChips();
   renderLibrary();
   $("#modal-library").classList.remove("hidden");
+}
+
+function setLibraryStatus(text, kind = "") {
+  const node = $("#library-status");
+  if (!node) return;
+  node.textContent = text;
+  node.className = `library-status ${kind}`.trim();
+}
+
+function scheduleLibrarySearch(query) {
+  clearTimeout(libraryTimer);
+  if (libraryAbort) libraryAbort.abort();
+  if (query.length < 2) {
+    state.onlineLibrary = [];
+    setLibraryStatus("");
+    renderLibrary();
+    return;
+  }
+  setLibraryStatus("正在检索在线化合物库…");
+  libraryTimer = setTimeout(() => runLibrarySearch(query), 350);
+}
+
+async function runLibrarySearch(query) {
+  const seq = ++librarySeq;
+  libraryAbort = new AbortController();
+  try {
+    const res = await fetch(
+      `/api/compounds/search?q=${encodeURIComponent(query)}&limit=6`,
+      { signal: libraryAbort.signal },
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (seq !== librarySeq) return;
+    state.onlineLibrary = data.online || [];
+    renderLibrary();
+    if (data.online_error) {
+      setLibraryStatus(`在线数据库暂不可用：${data.online_error}`, "warn");
+    } else if (state.onlineLibrary.length) {
+      setLibraryStatus(`在线补充 ${state.onlineLibrary.length} 个化合物，参数带“估算”标记`);
+    } else {
+      setLibraryStatus("没有更多在线结果");
+    }
+  } catch (err) {
+    if (err.name === "AbortError") return;
+    if (seq === librarySeq) setLibraryStatus(`在线搜索失败：${err.message}`, "warn");
+  }
 }
 
 function renderCategoryChips() {
@@ -1255,7 +1319,7 @@ function renderCategoryChips() {
 
 function renderLibrary() {
   const grid = $("#library-grid");
-  const filtered = state.library.filter((item) => {
+  const filtered = state.library.concat(state.onlineLibrary).filter((item) => {
     if (state.libraryCategory !== "全部" && item.category !== state.libraryCategory) return false;
     if (!state.librarySearch) return true;
     return `${item.name} ${item.name_en || ""} ${item.id} ${item.category || ""}`
@@ -1268,9 +1332,10 @@ function renderLibrary() {
     grid.innerHTML = filtered.map((item) => {
       const added = state.compounds.some((c) => c.id === item.id);
       const selected = state.librarySelection.has(item.id);
+      const online = item.source === "pubchem";
       return `
         <div class="library-item ${selected ? "selected" : ""} ${added ? "added" : ""}" data-library-id="${escapeHtml(item.id)}">
-          <span class="cat-tag">${escapeHtml(item.category || "")}</span>
+          <span class="cat-tag ${online ? "online" : ""}">${escapeHtml(online ? "PubChem" : item.category || "")}</span>
           <h4>${escapeHtml(item.name)}</h4>
           <div class="en">${escapeHtml(item.name_en || "")}${added ? " · 已添加" : ""}</div>
           <div class="props">
@@ -1278,6 +1343,7 @@ function renderLibrary() {
             ${item.pka != null ? `<span>pKa ${fmt(item.pka, 1)}</span>` : ""}
             <span>λ${Math.round(item.lambda_max_nm)}</span>
           </div>
+          ${online ? `<div class="estimate-note">pKa/λ 为估算值</div>` : ""}
         </div>
       `;
     }).join("");

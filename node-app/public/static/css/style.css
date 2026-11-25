@@ -871,6 +871,22 @@ input[type="range"]::-moz-range-thumb {
   background: rgba(56, 189, 248, 0.08);
   padding: 1px 6px; border-radius: 999px;
 }
+.library-item .cat-tag.online {
+  color: var(--amber);
+  background: rgba(251, 191, 36, 0.1);
+}
+.library-item .estimate-note {
+  margin-top: 5px;
+  font-size: 8.5px;
+  color: var(--amber);
+}
+.library-status {
+  min-height: 16px;
+  margin: -4px 0 9px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.library-status.warn { color: var(--amber); }
 .custom-compound {
   margin-top: 18px;
   border-top: 1px dashed var(--border-soft);

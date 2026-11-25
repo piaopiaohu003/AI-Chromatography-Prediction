@@ -56,6 +56,7 @@ log10 k = log10 k_w − S · φ
 | --- | --- | --- |
 | `GET` | `/api/health` | 健康检查 |
 | `GET` | `/api/compounds` | 内置化合物库与分类 |
+| `GET` | `/api/compounds/search` | 本地 + PubChem 动态化合物搜索 |
 | `POST` | `/api/simulate` | 条件 → 色谱图数据 |
 | `POST` | `/api/recommend` | 组分 → 推荐条件与方法 |
 | `POST` | `/api/identify` | 条件 + 观测保留时间 → 候选组分识别 |

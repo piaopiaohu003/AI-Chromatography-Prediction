@@ -13,6 +13,7 @@ const { recommend } = require('./lib/recommend');
 const { identify } = require('./lib/identify');
 const aiClient = require('./lib/ai-client');
 const models = require('./lib/models');
+const pubchem = require('./lib/pubchem');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const STATIC_DIR = path.join(PUBLIC_DIR, 'static');
@@ -50,6 +51,16 @@ function sendJson(res, status, payload) {
 
 function sendError(res, status, detail) {
   sendJson(res, status, { detail });
+}
+
+function searchLocalCompounds(query, limit = 12) {
+  if (!query) return COMPOUNDS.slice(0, limit);
+  const needle = query.toLowerCase();
+  return COMPOUNDS.filter((item) =>
+    `${item.name} ${item.name_en || ''} ${item.id} ${item.category || ''}`
+      .toLowerCase()
+      .includes(needle)
+  ).slice(0, limit);
 }
 
 function readBody(req) {
@@ -126,6 +137,31 @@ async function handleApi(req, res, pathname) {
       return sendError(res, 405, 'Method Not Allowed');
     }
     return sendJson(res, 200, { status: 'ok' });
+  }
+
+  if (pathname === '/api/compounds/search') {
+    if (method !== 'GET') {
+      return sendError(res, 405, 'Method Not Allowed');
+    }
+    const url = new URL(req.url, 'http://localhost');
+    const query = (url.searchParams.get('q') || '').trim();
+    const requested = Number.parseInt(url.searchParams.get('limit') || '6', 10);
+    const limit = Math.min(10, Math.max(1, Number.isFinite(requested) ? requested : 6));
+    const local = searchLocalCompounds(query);
+    if (query.length < 2) {
+      return sendJson(res, 200, { query, local, online: [], online_error: null });
+    }
+    try {
+      const online = await pubchem.searchOnline(query, limit);
+      return sendJson(res, 200, { query, local, online, online_error: null });
+    } catch (err) {
+      return sendJson(res, 200, {
+        query,
+        local,
+        online: [],
+        online_error: err.message || '在线数据库暂不可用',
+      });
+    }
   }
 
   if (pathname === '/api/compounds') {
