@@ -31,6 +31,7 @@ PHASE_ORGANICS = {
     "normal": ["IPA", "EtOAc", "THF", "EtOH"],
 }
 MAX_FAVORITES = 30
+MAX_LITERATURE_TOPICS = 12
 
 
 class AuthError(Exception):
@@ -194,6 +195,8 @@ def _ensure_account(user: dict) -> dict:
         user["preferences"] = merged
     if not isinstance(user.get("favorites"), list):
         user["favorites"] = []
+    if not isinstance(user.get("literature_watch"), list):
+        user["literature_watch"] = []
     return user
 
 
@@ -237,6 +240,7 @@ def get_account(user_id: str) -> dict:
         "user": _public_user(user),
         "preferences": dict(user["preferences"]),
         "favorites": [dict(item) for item in user["favorites"]],
+        "literature_topics": [_literature_topic_meta(item) for item in user["literature_watch"]],
     }
 
 
@@ -309,3 +313,108 @@ def delete_favorite(user_id: str, favorite_id: str) -> dict:
             _save_store(store)
             return {"ok": True, "id": favorite_id}
     raise AuthError("收藏不存在", 404)
+
+
+def _literature_topic_meta(topic: dict) -> dict:
+    return {
+        "id": topic["id"],
+        "name": topic["name"],
+        "query": topic["query"],
+        "created_at": topic.get("created_at"),
+        "last_scan_at": topic.get("last_scan_at"),
+        "new_count": len(topic.get("new_ids") or []),
+        "items_count": len(topic.get("items") or []),
+        "last_error": topic.get("last_error"),
+    }
+
+
+def _normalize_literature_topic(payload: object) -> tuple[str, str]:
+    if not isinstance(payload, dict):
+        raise AuthError("监控主题格式不正确")
+    name = str(payload.get("name") or "").strip()
+    query = str(payload.get("query") or "").strip()
+    if not name or len(name) > 40:
+        raise AuthError("主题名称需为 1–40 个字符")
+    if len(query) < 2 or len(query) > 160:
+        raise AuthError("检索式需为 2–160 个字符")
+    return name, query
+
+
+def list_literature_topics(user_id: str) -> dict:
+    store = _load_store()
+    user = _find_user(store, user_id)
+    return {"topics": [_literature_topic_meta(item) for item in user["literature_watch"]]}
+
+
+def add_literature_topic(user_id: str, payload: object) -> dict:
+    name, query = _normalize_literature_topic(payload)
+    store = _load_store()
+    user = _find_user(store, user_id)
+    if len(user["literature_watch"]) >= MAX_LITERATURE_TOPICS:
+        raise AuthError(f"最多创建 {MAX_LITERATURE_TOPICS} 个文献监控主题")
+    if any(item["query"].lower() == query.lower() for item in user["literature_watch"]):
+        raise AuthError("已存在相同检索式的监控主题", 409)
+    topic = {
+        "id": f"lit_{uuid.uuid4().hex[:12]}",
+        "name": name,
+        "query": query,
+        "created_at": datetime.now(tz=timezone.utc).isoformat(),
+        "last_scan_at": None,
+        "seen_ids": [],
+        "items": [],
+        "new_ids": [],
+        "last_error": None,
+    }
+    user["literature_watch"].insert(0, topic)
+    _save_store(store)
+    return {"topic": _literature_topic_meta(topic)}
+
+
+def delete_literature_topic(user_id: str, topic_id: str) -> dict:
+    store = _load_store()
+    user = _find_user(store, user_id)
+    for index, item in enumerate(user["literature_watch"]):
+        if item.get("id") == topic_id:
+            user["literature_watch"].pop(index)
+            _save_store(store)
+            return {"ok": True, "id": topic_id}
+    raise AuthError("监控主题不存在", 404)
+
+
+def get_literature_topic(user_id: str, topic_id: str) -> dict:
+    store = _load_store()
+    user = _find_user(store, user_id)
+    topic = next((item for item in user["literature_watch"] if item["id"] == topic_id), None)
+    if not topic:
+        raise AuthError("监控主题不存在", 404)
+    return {
+        "topic": _literature_topic_meta(topic),
+        "items": [dict(item) for item in (topic.get("items") or [])],
+        "seen_ids": list(topic.get("seen_ids") or []),
+    }
+
+
+def save_literature_scan(
+    user_id: str, topic_id: str, scan: Optional[dict], error_message: Optional[str] = None
+) -> dict:
+    store = _load_store()
+    user = _find_user(store, user_id)
+    topic = next((item for item in user["literature_watch"] if item["id"] == topic_id), None)
+    if not topic:
+        raise AuthError("监控主题不存在", 404)
+    if scan:
+        topic["last_scan_at"] = scan["scanned_at"]
+        topic["seen_ids"] = scan["seen_ids"]
+        topic["items"] = scan["items"]
+        topic["new_ids"] = scan["new_ids"]
+        topic["last_error"] = None
+    else:
+        topic["last_scan_at"] = datetime.now(tz=timezone.utc).isoformat()
+        topic["last_error"] = str(error_message or "扫描失败")[:200]
+        topic["new_ids"] = []
+    _save_store(store)
+    return {
+        "topic": _literature_topic_meta(topic),
+        "items": scan["items"] if scan else (topic.get("items") or []),
+        "new_count": scan["new_count"] if scan else 0,
+    }

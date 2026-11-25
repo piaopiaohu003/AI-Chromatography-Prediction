@@ -259,6 +259,19 @@ const state = {
     preferences: { ...DEFAULT_PREFERENCES },
     favorites: [],
   },
+  literature: {
+    loaded: false,
+    topics: [],
+    results: [],
+    sources: {},
+    query: "",
+    sort: "relevance",
+    loading: false,
+    scanning: null,
+    activeTopic: null,
+    autoScanStarted: false,
+    fromWatch: false,
+  },
 };
 
 const charts = { sim: null, ai: null };
@@ -879,6 +892,336 @@ async function loadSession() {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* literature references                                               */
+/* ------------------------------------------------------------------ */
+
+function litDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  });
+}
+
+function safeHttpUrl(value) {
+  const url = String(value || "");
+  return /^https?:\/\//i.test(url) ? url : "";
+}
+
+function litSourceLabel(sources) {
+  const names = [];
+  if (sources?.europepmc === "ok") names.push("Europe PMC");
+  if (sources?.crossref === "ok") names.push("Crossref");
+  return names.join(" · ");
+}
+
+function renderLitStatus(message, kind = "") {
+  const node = $("#lit-status");
+  if (!node) return;
+  node.textContent = message || "";
+  node.className = `library-status${kind ? ` ${kind}` : ""}`;
+}
+
+function renderLitContext() {
+  const node = $("#lit-context-chips");
+  if (!node) return;
+  const names = state.compounds.slice(0, 4).map((item) => item.name);
+  node.innerHTML = names.length
+    ? names.map((name) => `<span class="ai-chip">${escapeHtml(name)}</span>`).join("")
+    : '<span class="hint">尚未选择组分</span>';
+}
+
+function litContextQuery() {
+  const names = state.compounds.slice(0, 3).map((item) => item.name_en || item.name);
+  if (!names.length) return "";
+  const mode = state.conditions.phase === "normal" ? "normal phase HPLC" : "HPLC";
+  return `${names.join(" ")} ${mode}`;
+}
+
+function litCard(item) {
+  const meta = [
+    item.authors,
+    item.journal,
+    item.year ? String(item.year) : "",
+    item.cited_by != null ? `被引 ${item.cited_by}` : "",
+  ].filter(Boolean);
+  const tags = (item.sources || [])
+    .map((source) => `<span class="lit-tag">${source === "europepmc" ? "Europe PMC" : "Crossref"}</span>`)
+    .join("");
+  const link = safeHttpUrl(item.url);
+  const abstract = item.abstract
+    ? `<details class="lit-abstract"><summary>摘要</summary><p>${escapeHtml(item.abstract)}</p></details>`
+    : "";
+  return `
+    <article class="lit-card ${item.is_new ? "is-new" : ""}">
+      <div class="lit-card-top">
+        ${item.is_new ? '<span class="lit-new">NEW</span>' : ""}
+        ${tags}
+        <span class="lit-doi">${item.doi ? escapeHtml(item.doi) : "无 DOI"}</span>
+      </div>
+      <h3 class="lit-title">${escapeHtml(item.title)}</h3>
+      <p class="lit-meta">${meta.map((part) => escapeHtml(part)).join(" · ")}</p>
+      ${abstract}
+      ${link ? `<a class="lit-link" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">查看原文 ↗</a>` : ""}
+    </article>
+  `;
+}
+
+function renderLitResults(label) {
+  const node = $("#lit-results");
+  if (!node) return;
+  const results = state.literature.results;
+  $("#lit-result-count").textContent = String(results.length);
+  const note = $("#lit-source-note");
+  if (note) {
+    note.textContent = state.literature.fromWatch
+      ? "监控缓存 · Europe PMC / Crossref"
+      : (litSourceLabel(state.literature.sources) || "Europe PMC · Crossref");
+  }
+  const head = label
+    ? `<div class="lit-result-head"><span>${escapeHtml(label)}</span><span>${results.length} 篇</span></div>`
+    : "";
+  if (!results.length) {
+    node.innerHTML = `${head}<div class="empty-state">未检索到文献，可尝试更宽泛的关键词或切换排序。</div>`;
+    return;
+  }
+  node.innerHTML = head + results.map(litCard).join("");
+}
+
+function renderLiteratureTopics() {
+  const list = $("#lit-watch-list");
+  if (!list) return;
+  const topics = state.literature.topics;
+  $("#lit-watch-count").textContent = String(topics.length);
+  if (!topics.length) {
+    list.innerHTML = '<p class="hint">暂无监控主题，点击「+ 新建」创建。</p>';
+    return;
+  }
+  list.innerHTML = topics.map((topic) => {
+    const scanning = state.literature.scanning === topic.id;
+    const last = topic.last_scan_at
+      ? `扫描于 ${litDate(topic.last_scan_at)}`
+      : "尚未扫描";
+    return `
+      <div class="lit-watch-item ${state.literature.activeTopic === topic.id ? "active" : ""}">
+        <div class="lit-watch-main">
+          <div class="lit-watch-name">
+            ${escapeHtml(topic.name)}
+            ${topic.new_count ? `<span class="lit-badge">+${topic.new_count}</span>` : ""}
+          </div>
+          <div class="lit-watch-meta">
+            <span class="lit-watch-query">${escapeHtml(topic.query)}</span>
+            <span>${escapeHtml(last)}${topic.items_count ? ` · 缓存 ${topic.items_count} 篇` : ""}</span>
+            ${topic.last_error ? `<span class="lit-watch-error">${escapeHtml(topic.last_error)}</span>` : ""}
+          </div>
+        </div>
+        <div class="lit-watch-actions">
+          <button class="lit-mini-btn" data-lit-action="scan" data-topic-id="${escapeHtml(topic.id)}" ${scanning ? "disabled" : ""}>${scanning ? "扫描中…" : "扫描"}</button>
+          <button class="lit-mini-btn" data-lit-action="items" data-topic-id="${escapeHtml(topic.id)}">查看</button>
+          <button class="lit-mini-btn danger" data-lit-action="delete" data-topic-id="${escapeHtml(topic.id)}" aria-label="删除监控主题">×</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+async function renderLiteratureView() {
+  renderLitContext();
+  if (!state.literature.loaded) {
+    try {
+      const data = await apiJSON("/api/literature/watch");
+      state.literature.topics = Array.isArray(data.topics) ? data.topics : [];
+      state.literature.loaded = true;
+    } catch (_) { /* 401 is handled by apiJSON */ }
+  }
+  renderLiteratureTopics();
+  if (!state.literature.autoScanStarted) {
+    state.literature.autoScanStarted = true;
+    autoScanLiterature();
+  }
+}
+
+async function autoScanLiterature() {
+  const sixHours = 6 * 60 * 60 * 1000;
+  const stale = state.literature.topics
+    .filter((topic) => !topic.last_scan_at
+      || Date.now() - new Date(topic.last_scan_at).getTime() > sixHours)
+    .slice(0, 3);
+  if (!stale.length) return;
+  let added = 0;
+  for (const topic of stale) {
+    if ($("#view-lit").classList.contains("hidden")) break;
+    const data = await scanLiteratureTopic(topic.id, { silent: true });
+    added += data?.new_count || 0;
+  }
+  if (added > 0) toast(`文献监控发现 ${added} 篇新文献`, "ok");
+}
+
+async function scanLiteratureTopic(topicId, options = {}) {
+  const topic = state.literature.topics.find((item) => item.id === topicId);
+  state.literature.scanning = topicId;
+  renderLiteratureTopics();
+  try {
+    const data = await apiJSON(`/api/literature/watch/${encodeURIComponent(topicId)}/scan`, "POST");
+    if (data.topic) {
+      const index = state.literature.topics.findIndex((item) => item.id === topicId);
+      if (index !== -1) state.literature.topics[index] = data.topic;
+    }
+    if (!options.silent) {
+      if (data.scan_error) {
+        renderLitStatus(data.scan_error, "error");
+        toast(`扫描失败：${data.scan_error}`, "err");
+      } else {
+        toast(`扫描完成，新增 ${data.new_count || 0} 篇`, "ok");
+        showLiteratureItems(topicId, data.items || [], topic?.name || "");
+      }
+    }
+    return data;
+  } catch (err) {
+    if (!options.silent) {
+      renderLitStatus(String(err.message || err), "error");
+      toast(String(err.message || err), "err");
+    }
+    return { new_count: 0 };
+  } finally {
+    state.literature.scanning = null;
+    renderLiteratureTopics();
+  }
+}
+
+function showLiteratureItems(topicId, items, name) {
+  state.literature.activeTopic = topicId;
+  state.literature.fromWatch = true;
+  state.literature.results = items.slice();
+  renderLitResults(`监控主题：${name}`);
+  renderLitStatus(items.length ? "" : "该主题尚无缓存文献，请先扫描。", items.length ? "" : "error");
+  renderLiteratureTopics();
+}
+
+async function loadLiteratureItems(topicId) {
+  const topic = state.literature.topics.find((item) => item.id === topicId);
+  try {
+    const data = await apiJSON(`/api/literature/watch/${encodeURIComponent(topicId)}/items`);
+    showLiteratureItems(topicId, data.items || [], topic?.name || "");
+  } catch (err) {
+    renderLitStatus(String(err.message || err), "error");
+  }
+}
+
+async function runLiteratureSearch(query, options = {}) {
+  const q = String(query === undefined ? $("#lit-query").value : query).trim();
+  if (q.length < 2) {
+    toast("请输入至少 2 个字符的检索词", "err");
+    return;
+  }
+  state.literature.query = q;
+  const input = $("#lit-query");
+  if (input) input.value = q;
+  state.literature.sort = $("#lit-sort")?.value || "relevance";
+  state.literature.loading = true;
+  state.literature.fromWatch = false;
+  state.literature.activeTopic = null;
+  renderLiteratureTopics();
+  renderLitStatus("正在检索 Europe PMC 与 Crossref…", "loading");
+  $("#lit-result-count").textContent = "…";
+  $("#lit-results").innerHTML = "";
+  const params = new URLSearchParams({ q, sort: state.literature.sort, limit: "15" });
+  try {
+    const data = await apiJSON(`/api/literature/search?${params.toString()}`);
+    state.literature.results = Array.isArray(data.results) ? data.results : [];
+    state.literature.sources = data.sources || {};
+    renderLitResults(options.label || `检索：「${q}」`);
+    renderLitStatus((data.errors || []).join("；"), data.errors?.length ? "error" : "");
+  } catch (err) {
+    state.literature.results = [];
+    renderLitResults("");
+    renderLitStatus(String(err.message || err), "error");
+  } finally {
+    state.literature.loading = false;
+  }
+}
+
+async function saveLiteratureTopic() {
+  const name = $("#lit-watch-name").value.trim();
+  const query = $("#lit-watch-query").value.trim();
+  if (!name || query.length < 2) {
+    toast("请填写主题名称与至少 2 个字符的检索式", "err");
+    return;
+  }
+  try {
+    const data = await apiJSON("/api/literature/watch", "POST", { name, query });
+    state.literature.topics.unshift(data.topic);
+    $("#lit-watch-form").classList.add("hidden");
+    $("#lit-watch-name").value = "";
+    $("#lit-watch-query").value = "";
+    renderLiteratureTopics();
+    toast("监控主题已创建，正在首次扫描…", "ok");
+    await scanLiteratureTopic(data.topic.id, {});
+  } catch (err) {
+    toast(String(err.message || err), "err");
+  }
+}
+
+async function deleteLiteratureTopic(topicId) {
+  try {
+    await apiJSON(`/api/literature/watch/${encodeURIComponent(topicId)}`, "DELETE");
+    state.literature.topics = state.literature.topics.filter((item) => item.id !== topicId);
+    if (state.literature.activeTopic === topicId) {
+      state.literature.activeTopic = null;
+      state.literature.results = [];
+      state.literature.fromWatch = false;
+      renderLitResults("");
+      renderLitStatus("");
+    }
+    renderLiteratureTopics();
+    toast("已删除监控主题", "ok");
+  } catch (err) {
+    toast(String(err.message || err), "err");
+  }
+}
+
+function bindLiterature() {
+  $("#lit-search-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    runLiteratureSearch();
+  });
+  $("#lit-sort")?.addEventListener("change", () => {
+    if (state.literature.query) runLiteratureSearch(state.literature.query);
+  });
+  $("#btn-lit-context")?.addEventListener("click", () => {
+    const query = litContextQuery();
+    if (!query) {
+      toast("请先在模拟台添加样品组分", "err");
+      setTab("sim");
+      return;
+    }
+    runLiteratureSearch(query, { label: `当前体系：「${query}」` });
+  });
+  $("#btn-lit-watch-toggle")?.addEventListener("click", () => {
+    const form = $("#lit-watch-form");
+    form.classList.toggle("hidden");
+    if (!form.classList.contains("hidden")) $("#lit-watch-name").focus();
+  });
+  $("#btn-lit-watch-cancel")?.addEventListener("click", () => {
+    $("#lit-watch-form").classList.add("hidden");
+  });
+  $("#btn-lit-watch-save")?.addEventListener("click", saveLiteratureTopic);
+  $("#lit-watch-list")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-lit-action]");
+    if (!button) return;
+    const { litAction, topicId } = button.dataset;
+    if (litAction === "scan") {
+      scanLiteratureTopic(topicId, {});
+    } else if (litAction === "items") {
+      loadLiteratureItems(topicId);
+    } else if (litAction === "delete") {
+      deleteLiteratureTopic(topicId);
+    }
+  });
+}
+
 async function startApp() {
   if (appStarted) return;
   appStarted = true;
@@ -890,6 +1233,7 @@ async function startApp() {
   bindSettings();
   bindLibrary();
   bindQuickSearch();
+  bindLiterature();
   bindExport();
   bindAccount();
   await loadAccount();
@@ -944,11 +1288,15 @@ function setTab(tab, save = true) {
   });
   $("#view-sim").classList.toggle("hidden", tab !== "sim");
   $("#view-ai").classList.toggle("hidden", tab !== "ai");
+  $("#view-lit").classList.toggle("hidden", tab !== "lit");
   if (tab === "sim" && charts.sim) {
     requestAnimationFrame(() => charts.sim.draw());
   }
   if (tab === "ai") {
     renderAIView();
+  }
+  if (tab === "lit") {
+    renderLiteratureView();
   }
   if (save) persist();
 }

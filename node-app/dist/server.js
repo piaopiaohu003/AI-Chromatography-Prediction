@@ -14,6 +14,7 @@ const { identify } = require('./lib/identify');
 const aiClient = require('./lib/ai-client');
 const models = require('./lib/models');
 const pubchem = require('./lib/pubchem');
+const literature = require('./lib/literature');
 const auth = require('./lib/auth');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -303,6 +304,87 @@ async function handleApi(req, res, pathname) {
       return sendError(res, 405, 'Method Not Allowed');
     }
     return sendJson(res, 200, { compounds: COMPOUNDS, categories: CATEGORIES });
+  }
+
+  if (pathname === '/api/literature/search' || pathname.startsWith('/api/literature/watch')) {
+    const user = auth.currentUser(readCookie(req, auth.COOKIE_NAME));
+    if (!user) {
+      return sendError(res, 401, '请先登录');
+    }
+  }
+
+  if (pathname === '/api/literature/search') {
+    if (method !== 'GET') {
+      return sendError(res, 405, 'Method Not Allowed');
+    }
+    const url = new URL(req.url, 'http://localhost');
+    const requested = Number.parseInt(url.searchParams.get('limit') || '15', 10);
+    try {
+      const data = await literature.search(url.searchParams.get('q') || '', {
+        limit: Number.isFinite(requested) ? requested : 15,
+        sort: url.searchParams.get('sort') || 'relevance',
+        from_year: url.searchParams.get('from_year') || null,
+        to_year: url.searchParams.get('to_year') || null,
+      });
+      return sendJson(res, 200, data);
+    } catch (err) {
+      if (err instanceof literature.LiteratureError) {
+        return sendError(res, err.status, err.message);
+      }
+      return sendError(res, 502, `文献检索失败：${err.message || err}`);
+    }
+  }
+
+  const watchMatch = pathname.match(/^\/api\/literature\/watch(?:\/([^/]+))?(?:\/(scan|items))?$/);
+  if (watchMatch) {
+    const topicId = watchMatch[1];
+    const action = watchMatch[2];
+    const user = auth.currentUser(readCookie(req, auth.COOKIE_NAME));
+    try {
+      if (!topicId) {
+        if (method === 'GET') {
+          return sendJson(res, 200, auth.listLiteratureTopics(user.id));
+        }
+        if (method === 'POST') {
+          const body = await readJsonBody(req);
+          return sendJson(res, 200, auth.addLiteratureTopic(user.id, body));
+        }
+        return sendError(res, 405, 'Method Not Allowed');
+      }
+      if (action === 'items' && method === 'GET') {
+        const data = auth.getLiteratureTopic(user.id, topicId);
+        return sendJson(res, 200, { topic: data.topic, items: data.items });
+      }
+      if (action === 'scan' && method === 'POST') {
+        const current = auth.getLiteratureTopic(user.id, topicId);
+        try {
+          const scan = await literature.scanTopic(current.topic.query, current.seen_ids, {
+            baseline: !current.topic.last_scan_at,
+          });
+          return sendJson(res, 200, auth.saveLiteratureScan(user.id, topicId, scan));
+        } catch (err) {
+          const saved = auth.saveLiteratureScan(
+            user.id,
+            topicId,
+            null,
+            err.message || '文献扫描失败',
+          );
+          return sendJson(res, 200, {
+            ...saved,
+            scan_error: err.message || '文献数据库暂不可用',
+          });
+        }
+      }
+      if (!action && method === 'DELETE') {
+        return sendJson(res, 200, auth.deleteLiteratureTopic(user.id, topicId));
+      }
+      return sendError(res, 405, 'Method Not Allowed');
+    } catch (err) {
+      if (err instanceof auth.AuthError) {
+        return sendError(res, err.status, err.message);
+      }
+      throw err;
+    }
   }
 
   if (pathname === '/api/ai/status') {

@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import ai_client, auth
+from . import ai_client, auth, literature
 from .compounds import CATEGORIES, COMPOUNDS
 from .identify import identify
 from .pubchem import search_online
@@ -17,6 +17,7 @@ from .models import (
     AuthRequest,
     FavoriteRequest,
     IdentifyRequest,
+    LiteratureWatchRequest,
     PasswordChangeRequest,
     PreferencesPayload,
     RecommendRequest,
@@ -184,6 +185,84 @@ def account_favorite_delete(
         return auth.delete_favorite(user["id"], favorite_id)
     except auth.AuthError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+
+
+@app.get("/api/literature/search")
+def literature_search(
+    q: str = "",
+    sort: str = "relevance",
+    limit: int = 15,
+    from_year: int | None = None,
+    to_year: int | None = None,
+    _user: dict = Depends(require_user),
+) -> dict:
+    try:
+        return literature.search(
+            q, limit=limit, sort=sort, from_year=from_year, to_year=to_year
+        )
+    except literature.LiteratureError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+
+
+@app.get("/api/literature/watch")
+def literature_watch_list(user: dict = Depends(require_user)) -> dict:
+    return auth.list_literature_topics(user["id"])
+
+
+@app.post("/api/literature/watch")
+def literature_watch_add(
+    payload: LiteratureWatchRequest,
+    user: dict = Depends(require_user),
+) -> dict:
+    try:
+        return auth.add_literature_topic(user["id"], payload.model_dump())
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+
+
+@app.delete("/api/literature/watch/{topic_id}")
+def literature_watch_delete(
+    topic_id: str,
+    user: dict = Depends(require_user),
+) -> dict:
+    try:
+        return auth.delete_literature_topic(user["id"], topic_id)
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+
+
+@app.get("/api/literature/watch/{topic_id}/items")
+def literature_watch_items(
+    topic_id: str,
+    user: dict = Depends(require_user),
+) -> dict:
+    try:
+        data = auth.get_literature_topic(user["id"], topic_id)
+        return {"topic": data["topic"], "items": data["items"]}
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+
+
+@app.post("/api/literature/watch/{topic_id}/scan")
+def literature_watch_scan(
+    topic_id: str,
+    user: dict = Depends(require_user),
+) -> dict:
+    try:
+        current = auth.get_literature_topic(user["id"], topic_id)
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+    try:
+        scan = literature.scan_topic(
+            current["topic"]["query"],
+            current["seen_ids"],
+            baseline=not current["topic"].get("last_scan_at"),
+        )
+        return auth.save_literature_scan(user["id"], topic_id, scan)
+    except Exception as exc:  # noqa: BLE001
+        message = str(exc) or "文献数据库暂不可用"
+        saved = auth.save_literature_scan(user["id"], topic_id, None, message)
+        return {**saved, "scan_error": message}
 
 
 @app.post("/api/simulate")

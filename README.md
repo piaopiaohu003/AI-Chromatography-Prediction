@@ -9,6 +9,7 @@
 - **AI 条件设计**：给定组分，由 LLM 生成可上机的色谱条件，并强制通过物理模型复核；若存在未洗脱组分或分离度不足，自动回退到规则专家系统。等度方案会扫描 B 相比例，综合分离度与保留窗口择优。未配置模型时直接使用规则引擎。
 - **用户系统**：注册 / 登录后使用平台；密码以 scrypt 加盐哈希存储，会话通过 HttpOnly Cookie 维持。
 - **账户设置**：可保存默认色谱模式 / 有机相 / 检测器 / 柱温偏好、修改密码（并注销其他设备会话），以及收藏当前色谱条件并一键恢复。
+- **文献参考**：动态检索 Europe PMC 与 Crossref 的全球分析科学文献，支持按相关度 / 最新 / 被引排序，展示标题、作者、期刊、年份、DOI、摘要与被引次数；可创建监控主题，进入页面时自动增量扫描并标记新增文献，为色谱方法设计提供科学依据。
 
 ## 快速开始
 
@@ -81,6 +82,16 @@ log10 k = log10 k_ref − S_np · (φ − 0.10)
 4. 依据检测器选择柱型/流速（UV 常规柱、MS 窄径柱），优化检测波长，推荐缓冲盐。
 5. LLM 结果经同一模拟器复核并做参数约束；调用失败时自动回退规则引擎。
 
+## 文献参考
+
+平台内置“文献参考”标签页，用于在方法设计时查找可引用的分析科学文献：
+
+- **数据来源**：Europe PMC（PubMed / PMC / 预印本）与 Crossref 并行检索，均无需 API Key；按 DOI 与标题去重合并，结果缓存 10 分钟。
+- **检索质量**：对两源结果做关键词相关性过滤（标题命中权重高于摘要，泛化词如 method / analysis 不参与匹配），并剔除元数据中超出当前年份的异常年份；Crossref 始终按相关性检索后再在本地按年份 / 被引排序，避免“最新但不相关”。
+- **排序**：相关度（默认）、最新、被引；单次最多返回 30 条。
+- **动态监控**：每个账号最多 12 个监控主题。首次扫描建立基线（不标记新增），之后比对已见文献 ID 计算新增数量；进入页面时自动扫描超过 6 小时未更新的主题（最多 3 个，顺序执行），也可手动立即扫描。主题与扫描结果保存在账户 JSON 中，重新部署后随账户数据重置。
+- **降级策略**：单一数据源超时或不可用时自动使用另一来源，并在结果区提示来源状态；仅两源均失败时才报错。
+
 ## API
 
 | 方法 | 路径 | 说明 |
@@ -97,6 +108,11 @@ log10 k = log10 k_ref − S_np · (φ − 0.10)
 | `DELETE` | `/api/account/favorites/{id}` | 删除收藏 |
 | `GET` | `/api/compounds` | 内置化合物库与分类 |
 | `GET` | `/api/compounds/search` | 本地 + PubChem 动态化合物搜索 |
+| `GET` | `/api/literature/search` | 全球文献检索（Europe PMC + Crossref） |
+| `GET/POST` | `/api/literature/watch` | 文献监控主题列表 / 新建主题 |
+| `DELETE` | `/api/literature/watch/{id}` | 删除监控主题 |
+| `GET` | `/api/literature/watch/{id}/items` | 最近一次扫描结果 |
+| `POST` | `/api/literature/watch/{id}/scan` | 立即增量扫描 |
 | `POST` | `/api/simulate` | 条件 → 色谱图数据 |
 | `POST` | `/api/recommend` | 组分 → 推荐条件与方法 |
 | `POST` | `/api/identify` | 条件 + 观测保留时间 → 候选组分识别 |
@@ -113,10 +129,11 @@ app/                  FastAPI 后端
   simulation.py   保留/峰形/梯度数值积分与指标计算
   recommend.py    规则专家系统 + LLM 条件设计
   ai_client.py    OpenAI 兼容客户端
+  literature.py   Europe PMC / Crossref 文献检索与监控扫描
   main.py         FastAPI 路由与静态资源
 node-app/             Node.js 后端（线上部署）
   server.js       HTTP 服务、鉴权、静态托管
-  lib/            模型校验、模拟、推荐、识别、PubChem、账户
+  lib/            模型校验、模拟、推荐、识别、PubChem、文献、账户
   build.sh        前端同步与 dist 构建
 static/               前端源码（两种后端共用）
   index.html      单页界面

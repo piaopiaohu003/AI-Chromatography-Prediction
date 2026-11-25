@@ -141,6 +141,11 @@ class FavoriteRequest(BaseModel):
     conditions: dict
 
 
+class LiteratureWatchRequest(BaseModel):
+    name: str = ""
+    query: str = ""
+
+
 class IdentifyRequest(BaseModel):
     conditions: Conditions
     observed_peaks: List[ObservedPeak] = Field(..., min_length=1, max_length=20)

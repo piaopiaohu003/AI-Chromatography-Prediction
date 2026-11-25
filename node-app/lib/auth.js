@@ -22,6 +22,7 @@ const PHASE_ORGANICS = {
   normal: ['IPA', 'EtOAc', 'THF', 'EtOH'],
 };
 const MAX_FAVORITES = 30;
+const MAX_LITERATURE_TOPICS = 12;
 const DB_PATH = process.env.CHROM_USER_DB
   || path.join(process.env.TMPDIR || '/tmp', 'chromai-users.json');
 
@@ -68,6 +69,7 @@ function ensureAccount(user) {
     user.preferences = { ...DEFAULT_PREFERENCES, ...user.preferences };
   }
   if (!Array.isArray(user.favorites)) user.favorites = [];
+  if (!Array.isArray(user.literature_watch)) user.literature_watch = [];
   return user;
 }
 
@@ -229,6 +231,7 @@ function getAccount(userId) {
     user: publicUser(user),
     preferences: { ...user.preferences },
     favorites: user.favorites.map((item) => ({ ...item })),
+    literature_topics: user.literature_watch.map((item) => literatureTopicMeta(item)),
   };
 }
 
@@ -310,6 +313,118 @@ function deleteFavorite(userId, favoriteId) {
   return { ok: true, id: removed.id };
 }
 
+function literatureTopicMeta(topic) {
+  return {
+    id: topic.id,
+    name: topic.name,
+    query: topic.query,
+    created_at: topic.created_at,
+    last_scan_at: topic.last_scan_at || null,
+    new_count: Array.isArray(topic.new_ids) ? topic.new_ids.length : 0,
+    items_count: Array.isArray(topic.items) ? topic.items.length : 0,
+    last_error: topic.last_error || null,
+  };
+}
+
+function normalizeLiteratureTopic(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new AuthError('监控主题格式不正确');
+  }
+  const name = String(payload.name === undefined || payload.name === null ? '' : payload.name).trim();
+  const query = String(payload.query === undefined || payload.query === null ? '' : payload.query).trim();
+  if (!name || name.length > 40) {
+    throw new AuthError('主题名称需为 1–40 个字符');
+  }
+  if (query.length < 2 || query.length > 160) {
+    throw new AuthError('检索式需为 2–160 个字符');
+  }
+  return { name, query };
+}
+
+function listLiteratureTopics(userId) {
+  const store = loadStore();
+  const user = findUser(store, userId);
+  return { topics: user.literature_watch.map((item) => literatureTopicMeta(item)) };
+}
+
+function addLiteratureTopic(userId, payload) {
+  const { name, query } = normalizeLiteratureTopic(payload);
+  const store = loadStore();
+  const user = findUser(store, userId);
+  if (user.literature_watch.length >= MAX_LITERATURE_TOPICS) {
+    throw new AuthError(`最多创建 ${MAX_LITERATURE_TOPICS} 个文献监控主题`);
+  }
+  if (user.literature_watch.some((item) => item.query.toLowerCase() === query.toLowerCase())) {
+    throw new AuthError('已存在相同检索式的监控主题', 409);
+  }
+  const topic = {
+    id: `lit_${crypto.randomBytes(6).toString('hex')}`,
+    name,
+    query,
+    created_at: new Date().toISOString(),
+    last_scan_at: null,
+    seen_ids: [],
+    items: [],
+    new_ids: [],
+    last_error: null,
+  };
+  user.literature_watch.unshift(topic);
+  saveStore(store);
+  return { topic: literatureTopicMeta(topic) };
+}
+
+function deleteLiteratureTopic(userId, topicId) {
+  const store = loadStore();
+  const user = findUser(store, userId);
+  const index = user.literature_watch.findIndex((item) => item.id === topicId);
+  if (index === -1) {
+    throw new AuthError('监控主题不存在', 404);
+  }
+  const [removed] = user.literature_watch.splice(index, 1);
+  saveStore(store);
+  return { ok: true, id: removed.id };
+}
+
+function getLiteratureTopic(userId, topicId) {
+  const store = loadStore();
+  const user = findUser(store, userId);
+  const topic = user.literature_watch.find((item) => item.id === topicId);
+  if (!topic) {
+    throw new AuthError('监控主题不存在', 404);
+  }
+  return {
+    topic: literatureTopicMeta(topic),
+    items: Array.isArray(topic.items) ? topic.items.map((item) => ({ ...item })) : [],
+    seen_ids: Array.isArray(topic.seen_ids) ? topic.seen_ids.slice() : [],
+  };
+}
+
+function saveLiteratureScan(userId, topicId, scan, errorMessage) {
+  const store = loadStore();
+  const user = findUser(store, userId);
+  const topic = user.literature_watch.find((item) => item.id === topicId);
+  if (!topic) {
+    throw new AuthError('监控主题不存在', 404);
+  }
+  if (scan) {
+    topic.last_scan_at = scan.scanned_at;
+    topic.seen_ids = scan.seen_ids;
+    topic.items = scan.items;
+    topic.new_ids = scan.new_ids;
+    topic.last_error = null;
+  } else {
+    topic.last_scan_at = new Date().toISOString();
+    topic.last_error = String(errorMessage || '扫描失败').slice(0, 200);
+    topic.new_ids = [];
+  }
+  saveStore(store);
+  return {
+    topic: literatureTopicMeta(topic),
+    items: scan ? scan.items : (topic.items || []),
+    new_count: scan ? scan.new_count : 0,
+  };
+}
+
 module.exports = {
   AuthError,
   COOKIE_NAME,
@@ -325,4 +440,9 @@ module.exports = {
   changePassword,
   addFavorite,
   deleteFavorite,
+  listLiteratureTopics,
+  addLiteratureTopic,
+  deleteLiteratureTopic,
+  getLiteratureTopic,
+  saveLiteratureScan,
 };
