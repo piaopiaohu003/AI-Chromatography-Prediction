@@ -2,7 +2,7 @@
   "name": "chromai-node",
   "version": "1.0.0",
   "private": true,
-  "description": "ChromAI reversed-phase HPLC retention simulation and AI assisted method design API",
+  "description": "ChromAI reversed-phase and normal-phase HPLC retention simulation and AI assisted method design API",
   "main": "server.js",
   "engines": {
     "node": ">=20"

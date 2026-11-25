@@ -12,6 +12,7 @@ class ColumnConfig(BaseModel):
     inner_diameter_mm: float = Field(4.6, ge=1.0, le=10.0)
     particle_um: float = Field(5.0, ge=1.2, le=10.0)
     porosity: float = Field(0.65, ge=0.45, le=0.85)
+    chemistry: Literal["c18", "silica", "diol", "amino"] = "c18"
 
 
 class GradientPoint(BaseModel):
@@ -20,8 +21,9 @@ class GradientPoint(BaseModel):
 
 
 class Conditions(BaseModel):
+    phase: Literal["reversed", "normal"] = "reversed"
     mode: Literal["isocratic", "gradient"] = "gradient"
-    organic: Literal["ACN", "MeOH"] = "ACN"
+    organic: Literal["ACN", "MeOH", "IPA", "EtOAc"] = "ACN"
     percent_b: float = Field(50.0, ge=0.0, le=100.0)
     gradient: List[GradientPoint] = Field(
         default_factory=lambda: [
@@ -53,6 +55,8 @@ class Compound(BaseModel):
     concentration_mg_l: float = Field(100.0, ge=0.01, le=10000.0)
     log_kw: Optional[float] = None
     s_value: Optional[float] = None
+    log_k_np: Optional[float] = None
+    s_np: Optional[float] = None
     epsilon_max: float = 1.0
 
 
@@ -63,7 +67,8 @@ class SimulateRequest(BaseModel):
 
 class RecommendConstraints(BaseModel):
     detector: Literal["UV", "MS"] = "UV"
-    organic: Literal["auto", "ACN", "MeOH"] = "auto"
+    phase: Literal["auto", "reversed", "normal"] = "auto"
+    organic: Literal["auto", "ACN", "MeOH", "IPA", "EtOAc"] = "auto"
     mode: Literal["auto", "isocratic", "gradient"] = "auto"
     max_run_min: float = Field(40.0, ge=8.0, le=120.0)
 

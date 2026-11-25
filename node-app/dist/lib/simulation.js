@@ -21,7 +21,14 @@ const WATER_VISC = 0.00089; // Pa.s at 25 C
 const ORGANIC_PROPS = {
   ACN: { visc: 0.00037, dm: 0.060 }, // Dm in mm^2/min
   MeOH: { visc: 0.00055, dm: 0.052 },
+  IPA: { visc: 0.00240, dm: 0.045 },
+  EtOAc: { visc: 0.00043, dm: 0.070 },
 };
+const PHASE_PROPS = {
+  reversed: { base_visc: WATER_VISC },
+  normal: { base_visc: 0.00030 }, // n-hexane at 25 C
+};
+const NP_REF_PHI = 0.10; // normal-phase reference: 10% polar modifier
 const RESPONSE_SCALE = 6.0; // mAU*min per ug of injected mass at full absorptivity
 const TAIL_RATIO = 0.18;
 
@@ -56,9 +63,25 @@ function sValue(compound, organic) {
   return clamp(3.0 + 0.10 * compound.log_p, 2.4, 4.8);
 }
 
-function tempFactor(compound, temperatureC) {
+function npLogKRef(compound) {
+  if (compound.log_k_np !== null && compound.log_k_np !== undefined) {
+    return compound.log_k_np;
+  }
+  // QSRR: polar analytes (low logP) are retained more strongly in NPLC.
+  return clamp(1.55 - 0.42 * compound.log_p, -1.0, 3.2);
+}
+
+function npS(compound) {
+  if (compound.s_np !== null && compound.s_np !== undefined) {
+    return compound.s_np;
+  }
+  return clamp(7.5 + 0.25 * compound.log_p, 5.0, 11.0);
+}
+
+function tempFactor(compound, temperatureC, phase = 'reversed') {
   // Exothermic retention: dH is negative, so k falls as T rises.
-  const dH = -(13.0e3 + 2.0e3 * clamp(compound.log_p, -1.0, 6.0));
+  const baseDH = phase === 'reversed' ? 13.0e3 : 8.0e3;
+  const dH = -(baseDH + 2.0e3 * clamp(compound.log_p, -1.0, 6.0));
   const t = temperatureC + 273.15;
   return Math.exp(dH / R_GAS * (1.0 / 298.15 - 1.0 / t));
 }
@@ -133,21 +156,27 @@ function simulate(compounds, conditions) {
   const plates = Math.max(250.0, column.length_mm / plateHeightMm);
 
   const n = compounds.length;
-  const logKwArr = new Array(n);
+  const phase = conditions.phase || 'reversed';
   const sArr = new Array(n);
-  const neutralArr = new Array(n);
   const tempArr = new Array(n);
   const logK0 = new Array(n);
   for (let i = 0; i < n; i += 1) {
     const c = compounds[i];
-    logKwArr[i] = logKw(c);
-    sArr[i] = sValue(c, conditions.organic);
-    neutralArr[i] = neutralFraction(c, conditions.ph);
-    tempArr[i] = tempFactor(c, conditions.temperature_c);
-    // Combined intercept: log k at phi = 0 for the actual pH / temperature.
-    logK0[i] = logKwArr[i]
-      + Math.log10(Math.max(neutralArr[i], 1e-9))
-      + Math.log10(Math.max(tempArr[i], 1e-9));
+    tempArr[i] = tempFactor(c, conditions.temperature_c, phase);
+    if (phase === 'normal') {
+      // NPLC: reference point is 10% polar modifier; pH is not meaningful.
+      sArr[i] = npS(c);
+      logK0[i] = npLogKRef(c)
+        + sArr[i] * NP_REF_PHI
+        + Math.log10(Math.max(tempArr[i], 1e-9));
+    } else {
+      sArr[i] = sValue(c, conditions.organic);
+      const neutral = neutralFraction(c, conditions.ph);
+      // Combined intercept: log k at phi = 0 for the actual pH / temperature.
+      logK0[i] = logKw(c)
+        + Math.log10(Math.max(neutral, 1e-9))
+        + Math.log10(Math.max(tempArr[i], 1e-9));
+    }
   }
 
   // --- run length -------------------------------------------------------
@@ -347,7 +376,8 @@ function simulate(compounds, conditions) {
 
   // --- pressure & warnings ---------------------------------------------
   const meanPhi = mean(composition) / 100.0;
-  let eta = WATER_VISC + meanPhi * (ORGANIC_PROPS[conditions.organic].visc - WATER_VISC);
+  const baseVisc = PHASE_PROPS[phase].base_visc;
+  let eta = baseVisc + meanPhi * (ORGANIC_PROPS[conditions.organic].visc - baseVisc);
   eta *= Math.max(0.4, 1.0 - 0.021 * (conditions.temperature_c - 25.0));
   const pressureBar = 1600.0 * eta * column.length_mm * (u / 60.0) / Math.pow(dpMm, 2) / 1e5;
 
@@ -356,7 +386,7 @@ function simulate(compounds, conditions) {
   if (notEluted.length) {
     warnings.push(
       '以下组分在运行时间内未洗脱：' + notEluted.join('、')
-      + '。建议提高有机相比例或延长运行时间。',
+      + '。建议提高强洗脱溶剂 B 的比例或延长运行时间。',
     );
   }
   for (const p of peaks) {
@@ -369,7 +399,7 @@ function simulate(compounds, conditions) {
   for (const p of peaks) {
     if (p.visible && p.k !== null && p.k > 20.0) {
       warnings.push(
-        `「${p.name}」保留过强（k=${p.k.toFixed(1)}），峰形易展宽，建议增大有机相比例。`,
+        `「${p.name}」保留过强（k=${p.k.toFixed(1)}），峰形易展宽，建议增大 B 比例。`,
       );
     }
   }
@@ -390,10 +420,31 @@ function simulate(compounds, conditions) {
       );
     }
   }
-  for (const c of compounds) {
-    if (c.pka !== null && c.pka !== undefined && Math.abs(conditions.ph - c.pka) < 0.5) {
+  if (phase === 'reversed') {
+    for (const c of compounds) {
+      if (c.pka !== null && c.pka !== undefined && Math.abs(conditions.ph - c.pka) < 0.5) {
+        warnings.push(
+          `pH ${conditions.ph.toFixed(1)} 接近「${c.name}」的 pKa ${c.pka.toFixed(1)}，保留时间对 pH 波动敏感。`,
+        );
+      }
+    }
+    if (column.chemistry && column.chemistry !== 'c18') {
       warnings.push(
-        `pH ${conditions.ph.toFixed(1)} 接近「${c.name}」的 pKa ${c.pka.toFixed(1)}，保留时间对 pH 波动敏感。`,
+        `反相模型按 C18 校准，当前固定相为 ${String(column.chemistry).toUpperCase()}，保留预测仅作相对参考。`,
+      );
+    }
+  } else {
+    if (column.chemistry && !['silica', 'diol', 'amino'].includes(column.chemistry)) {
+      warnings.push('正相模式建议使用硅胶、二醇或氨基柱；当前 C18 固定相不适合正相条件。');
+    }
+    const ionizable = compounds
+      .filter((c) => c.pka !== null && c.pka !== undefined)
+      .map((c) => c.name);
+    if (ionizable.length) {
+      warnings.push(
+        '正相不使用 pH 控制，以下组分具有可电离基团，可能与硅醇基强吸附或拖尾：'
+        + ionizable.join('、')
+        + '。建议使用氨基/二醇柱或加入少量极性添加剂。',
       );
     }
   }
@@ -410,7 +461,7 @@ function simulate(compounds, conditions) {
       : 0.0;
     if (lastTr > programEnd + 0.5) {
       warnings.push(
-        '最后一个峰在梯度程序结束后才洗脱，可适当延长梯度时间或提高末端有机相比例。',
+        '最后一个峰在梯度程序结束后才洗脱，可适当延长梯度时间或提高末端 B 比例。',
       );
     }
   }
@@ -426,6 +477,8 @@ function simulate(compounds, conditions) {
     wavelength_nm: conditions.wavelength_nm,
     organic: conditions.organic,
     mode: conditions.mode,
+    phase,
+    chemistry: column.chemistry || 'c18',
   };
 
   return {
@@ -447,6 +500,8 @@ module.exports = {
   neutralFraction,
   logKw,
   sValue,
+  npLogKRef,
+  npS,
   tempFactor,
   epsRel,
   gradientArrays,

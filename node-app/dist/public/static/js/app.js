@@ -8,6 +8,7 @@ const STORAGE_KEY = "chromai-state-v2";
 const AI_SESSION_KEY = "chromai-ai-key";
 
 const DEFAULT_CONDITIONS = () => ({
+  phase: "reversed",
   mode: "gradient",
   organic: "ACN",
   percent_b: 50,
@@ -20,7 +21,13 @@ const DEFAULT_CONDITIONS = () => ({
   temperature_c: 30,
   ph: 2.5,
   wavelength_nm: 254,
-  column: { length_mm: 150, inner_diameter_mm: 4.6, particle_um: 5, porosity: 0.65 },
+  column: {
+    length_mm: 150,
+    inner_diameter_mm: 4.6,
+    particle_um: 5,
+    porosity: 0.65,
+    chemistry: "c18",
+  },
   dwell_volume_ml: 1,
   injection_volume_ul: 10,
   total_time_min: null,
@@ -140,7 +147,77 @@ const COLUMN_PRESETS = [
     flow_ml_min: 0.05,
     dwell_volume_ml: 0.3,
   },
+  {
+    id: "silica-150-46-5",
+    name: "标准硅胶",
+    group: "正相柱",
+    phase: "normal",
+    column: {
+      length_mm: 150, inner_diameter_mm: 4.6, particle_um: 5, porosity: 0.65, chemistry: "silica",
+    },
+    flow_ml_min: 1,
+    dwell_volume_ml: 1,
+  },
+  {
+    id: "silica-250-46-5",
+    name: "高分离硅胶",
+    group: "正相柱",
+    phase: "normal",
+    column: {
+      length_mm: 250, inner_diameter_mm: 4.6, particle_um: 5, porosity: 0.65, chemistry: "silica",
+    },
+    flow_ml_min: 1,
+    dwell_volume_ml: 1.2,
+  },
+  {
+    id: "diol-150-46-5",
+    name: "二醇柱",
+    group: "正相柱",
+    phase: "normal",
+    column: {
+      length_mm: 150, inner_diameter_mm: 4.6, particle_um: 5, porosity: 0.65, chemistry: "diol",
+    },
+    flow_ml_min: 1,
+    dwell_volume_ml: 1,
+  },
+  {
+    id: "amino-150-46-5",
+    name: "氨基柱",
+    group: "正相柱",
+    phase: "normal",
+    column: {
+      length_mm: 150, inner_diameter_mm: 4.6, particle_um: 5, porosity: 0.65, chemistry: "amino",
+    },
+    flow_ml_min: 1,
+    dwell_volume_ml: 1,
+  },
+  {
+    id: "silica-100-21-3",
+    name: "窄径硅胶",
+    group: "正相柱",
+    phase: "normal",
+    column: {
+      length_mm: 100, inner_diameter_mm: 2.1, particle_um: 3, porosity: 0.65, chemistry: "silica",
+    },
+    flow_ml_min: 0.3,
+    dwell_volume_ml: 0.4,
+  },
+  {
+    id: "silica-50-21-3",
+    name: "快速硅胶",
+    group: "正相柱",
+    phase: "normal",
+    column: {
+      length_mm: 50, inner_diameter_mm: 2.1, particle_um: 3, porosity: 0.65, chemistry: "silica",
+    },
+    flow_ml_min: 0.3,
+    dwell_volume_ml: 0.3,
+  },
 ];
+
+const COLUMN_CHEMISTRY_LABELS = {
+  c18: "C18", silica: "Silica", diol: "Diol", amino: "Amino",
+};
 
 const DEFAULT_IDS = ["benzoic-acid", "acetaminophen", "caffeine", "ibuprofen"];
 
@@ -153,7 +230,7 @@ const state = {
   simBusy: false,
   tab: "sim",
   aiConfig: { base_url: "", model: "", api_key: "" },
-  aiConstraints: { detector: "UV", organic: "auto", mode: "auto", max_run_min: 40 },
+  aiConstraints: { detector: "UV", phase: "auto", organic: "auto", mode: "auto", max_run_min: 40 },
   aiStatus: { configured: false },
   aiResult: null,
   aiBusy: false,
@@ -270,7 +347,7 @@ function restore() {
       }
       state.tab = raw.tab === "ai" ? "ai" : "sim";
       state.aiConstraints = {
-        detector: "UV", organic: "auto", mode: "auto", max_run_min: 40,
+        detector: "UV", phase: "auto", organic: "auto", mode: "auto", max_run_min: 40,
         ...(raw.aiConstraints || {}),
       };
       state.aiConfig = { base_url: "", model: "", api_key: "", ...(raw.aiConfig || {}) };
@@ -415,8 +492,12 @@ function bindSimControls() {
     persist();
     scheduleSim();
   });
-  bindSegment("#seg-organic", () => state.conditions.organic, (value) => {
-    state.conditions.organic = value;
+  bindSegment("#seg-phase", () => state.conditions.phase, (value) => setPhase(value));
+  $("#seg-organic").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-value]");
+    if (!button) return;
+    state.conditions.organic = button.dataset.value;
+    syncSegment("#seg-organic", state.conditions.organic);
     persist();
     scheduleSim();
   });
@@ -520,6 +601,7 @@ function syncSegment(selector, value) {
 
 function syncControls() {
   const conditions = state.conditions;
+  syncPhaseUI();
   syncSegment("#seg-mode", conditions.mode);
   syncSegment("#seg-organic", conditions.organic);
   lightSyncSegment("#seg-detector", state.aiConstraints.detector);
@@ -560,14 +642,114 @@ function lightSyncSegment(selector, value) {
   });
 }
 
+const ORGANIC_OPTIONS = {
+  reversed: [
+    { value: "ACN", label: "乙腈 ACN" },
+    { value: "MeOH", label: "甲醇 MeOH" },
+  ],
+  normal: [
+    { value: "IPA", label: "异丙醇 IPA" },
+    { value: "EtOAc", label: "乙酸乙酯 EtOAc" },
+  ],
+};
+
+function renderOrganicOptions() {
+  const phase = state.conditions.phase || "reversed";
+  const options = ORGANIC_OPTIONS[phase];
+  if (!options.some((item) => item.value === state.conditions.organic)) {
+    state.conditions.organic = options[0].value;
+  }
+  $("#seg-organic").innerHTML = options
+    .map((item) => `<button data-value="${item.value}">${item.label}</button>`)
+    .join("");
+  syncSegment("#seg-organic", state.conditions.organic);
+}
+
+function renderAiOrganicOptions() {
+  const phase = state.aiConstraints.phase;
+  const options = [{ value: "auto", label: "自动" }];
+  if (phase === "normal") {
+    options.push({ value: "IPA", label: "IPA" }, { value: "EtOAc", label: "EtOAc" });
+  } else if (phase === "reversed") {
+    options.push({ value: "ACN", label: "ACN" }, { value: "MeOH", label: "MeOH" });
+  } else {
+    options.push(
+      { value: "ACN", label: "ACN" },
+      { value: "MeOH", label: "MeOH" },
+      { value: "IPA", label: "IPA" },
+      { value: "EtOAc", label: "EtOAc" },
+    );
+  }
+  if (!options.some((item) => item.value === state.aiConstraints.organic)) {
+    state.aiConstraints.organic = "auto";
+  }
+  $("#seg-ai-organic").innerHTML = options
+    .map((item) => `<button data-value="${item.value}">${item.label}</button>`)
+    .join("");
+  lightSyncSegment("#seg-ai-organic", state.aiConstraints.organic);
+}
+
+function syncPhaseUI() {
+  const phase = state.conditions.phase || "reversed";
+  const normal = phase === "normal";
+  syncSegment("#seg-phase", phase);
+  lightSyncSegment("#seg-ai-phase", state.aiConstraints.phase);
+  $("#phase-note").classList.toggle("hidden", !normal);
+  $("#ph-field").classList.toggle("hidden", normal);
+  $("#organic-label").textContent = normal ? "极性调节剂 B" : "有机相";
+  $("#iso-label").textContent = normal ? "极性调节剂比例 B" : "有机相比例 B";
+  $("#grad-hint").textContent = normal
+    ? "时间从 0 min 起，%B 为极性调节剂体积分数"
+    : "时间从 0 min 起，%B 为有机相体积分数";
+  $("#column-hint").textContent = normal
+    ? "正相推荐硅胶/二醇/氨基柱，A 相为正己烷"
+    : "切换预设会同时应用推荐流速与系统延迟体积";
+  const isoPreset = $('[data-preset="iso50"]');
+  if (isoPreset) isoPreset.textContent = normal ? "等度 10%" : "等度 50%";
+  renderOrganicOptions();
+  renderAiOrganicOptions();
+  renderColumnOptions();
+  syncColumnSelector();
+}
+
+function setPhase(phase) {
+  if (!["reversed", "normal"].includes(phase) || state.conditions.phase === phase) return;
+  state.conditions.phase = phase;
+  const normal = phase === "normal";
+  if (normal && !["IPA", "EtOAc"].includes(state.conditions.organic)) {
+    state.conditions.organic = "IPA";
+  }
+  if (!normal && !["ACN", "MeOH"].includes(state.conditions.organic)) {
+    state.conditions.organic = "ACN";
+  }
+  const allowed = normal ? ["silica", "diol", "amino"] : ["c18"];
+  if (!allowed.includes(state.conditions.column.chemistry)) {
+    state.conditions.column.chemistry = normal ? "silica" : "c18";
+  }
+  syncControls();
+  persist();
+  scheduleSim(0);
+  toast(normal ? "已切换为正相 NPLC" : "已切换为反相 RPLC", "ok");
+}
+
+function setAiPhase(phase) {
+  state.aiConstraints.phase = phase;
+  renderAiOrganicOptions();
+  lightSyncSegment("#seg-ai-phase", phase);
+  persist();
+}
+
 function renderColumnOptions() {
   const select = $("#column-preset");
   if (!select) return;
+  const phase = state.conditions.phase || "reversed";
   const groups = new Map();
-  COLUMN_PRESETS.forEach((preset) => {
-    if (!groups.has(preset.group)) groups.set(preset.group, []);
-    groups.get(preset.group).push(preset);
-  });
+  COLUMN_PRESETS
+    .filter((preset) => (preset.phase || "reversed") === phase)
+    .forEach((preset) => {
+      if (!groups.has(preset.group)) groups.set(preset.group, []);
+      groups.get(preset.group).push(preset);
+    });
   const options = Array.from(groups.entries()).map(([group, presets]) => {
     const items = presets.map((preset) =>
       `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.name)} · ${preset.column.length_mm} × ${preset.column.inner_diameter_mm} mm, ${preset.column.particle_um} µm</option>`
@@ -578,10 +760,14 @@ function renderColumnOptions() {
 }
 
 function matchColumnPreset(column) {
-  const matched = COLUMN_PRESETS.find((preset) =>
-    ["length_mm", "inner_diameter_mm", "particle_um", "porosity"].every(
-      (key) => Math.abs(Number(column[key]) - Number(preset.column[key])) < 1e-6,
-    ));
+  const phase = state.conditions.phase || "reversed";
+  const matched = COLUMN_PRESETS
+    .filter((preset) => (preset.phase || "reversed") === phase)
+    .find((preset) =>
+      ["length_mm", "inner_diameter_mm", "particle_um", "porosity"].every(
+        (key) => Math.abs(Number(column[key]) - Number(preset.column[key])) < 1e-6,
+      )
+      && (column.chemistry || "c18") === (preset.column.chemistry || "c18"));
   return matched ? matched.id : "custom";
 }
 
@@ -594,7 +780,8 @@ function syncColumnSelector() {
   select.value = presetId;
   const summary = $("#column-summary");
   if (summary) {
-    summary.textContent = `${preset ? preset.name : "自定义"} · ${column.length_mm} × ${column.inner_diameter_mm} mm · ${column.particle_um} µm`;
+    const chemistry = COLUMN_CHEMISTRY_LABELS[column.chemistry] || "C18";
+    summary.textContent = `${preset ? preset.name : "自定义"} · ${chemistry} · ${column.length_mm} × ${column.inner_diameter_mm} mm · ${column.particle_um} µm`;
   }
 }
 
@@ -607,13 +794,18 @@ function applyColumnPreset(presetId) {
     const column = state.conditions.column;
     const summary = $("#column-summary");
     if (summary) {
-      summary.textContent = `自定义 · ${column.length_mm} × ${column.inner_diameter_mm} mm · ${column.particle_um} µm`;
+      const chemistry = COLUMN_CHEMISTRY_LABELS[column.chemistry] || "C18";
+      summary.textContent = `自定义 · ${chemistry} · ${column.length_mm} × ${column.inner_diameter_mm} mm · ${column.particle_um} µm`;
     }
     return;
   }
   const preset = COLUMN_PRESETS.find((item) => item.id === presetId);
   if (!preset) return;
-  state.conditions.column = { ...state.conditions.column, ...preset.column };
+  state.conditions.column = {
+    ...state.conditions.column,
+    ...preset.column,
+    chemistry: preset.column.chemistry || "c18",
+  };
   state.conditions.flow_ml_min = preset.flow_ml_min;
   state.conditions.dwell_volume_ml = preset.dwell_volume_ml;
   syncControls();
@@ -640,6 +832,44 @@ function updateOutputs() {
 
 function applyPreset(name) {
   const conditions = state.conditions;
+  if ((conditions.phase || "reversed") === "normal") {
+    const presets = {
+      screen: {
+        mode: "gradient",
+        gradient: [
+          { time_min: 0, percent_b: 2 },
+          { time_min: 20, percent_b: 40 },
+          { time_min: 24, percent_b: 40 },
+        ],
+      },
+      iso50: { mode: "isocratic", percent_b: 10 },
+      polar: {
+        mode: "gradient",
+        gradient: [
+          { time_min: 0, percent_b: 2 },
+          { time_min: 18, percent_b: 60 },
+          { time_min: 22, percent_b: 60 },
+        ],
+      },
+      hydrophobic: { mode: "isocratic", percent_b: 4 },
+    };
+    if (presets[name]) {
+      Object.assign(conditions, presets[name], {
+        organic: "IPA",
+        ph: 7,
+        flow_ml_min: 1,
+        temperature_c: 30,
+        wavelength_nm: 254,
+        total_time_min: null,
+      });
+    }
+    syncControls();
+    persist();
+    scheduleSim(0);
+    const active = $(`[data-preset="${name}"]`);
+    if (active) active.classList.add("active");
+    return;
+  }
   if (name === "screen") {
     Object.assign(conditions, {
       mode: "gradient",
@@ -896,8 +1126,12 @@ function bindAIControls() {
     persist();
     refreshAIStatus();
   });
-  bindSegment("#seg-ai-organic", () => state.aiConstraints.organic, (value) => {
-    state.aiConstraints.organic = value;
+  bindSegment("#seg-ai-phase", () => state.aiConstraints.phase, (value) => setAiPhase(value));
+  $("#seg-ai-organic").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-value]");
+    if (!button) return;
+    state.aiConstraints.organic = button.dataset.value;
+    lightSyncSegment("#seg-ai-organic", state.aiConstraints.organic);
     persist();
   });
   bindSegment("#seg-ai-mode", () => state.aiConstraints.mode, (value) => {

@@ -96,6 +96,7 @@ const COLUMN_DEFAULTS = {
   inner_diameter_mm: 4.6,
   particle_um: 5.0,
   porosity: 0.65,
+  chemistry: 'c18',
 };
 
 function normalizeColumn(raw, path) {
@@ -110,6 +111,7 @@ function normalizeColumn(raw, path) {
     inner_diameter_mm: parseNumber(raw.inner_diameter_mm, `${path}.inner_diameter_mm`, { defaultValue: 4.6, min: 1.0, max: 10.0 }),
     particle_um: parseNumber(raw.particle_um, `${path}.particle_um`, { defaultValue: 5.0, min: 1.2, max: 10.0 }),
     porosity: parseNumber(raw.porosity, `${path}.porosity`, { defaultValue: 0.65, min: 0.45, max: 0.85 }),
+    chemistry: parseLiteral(raw.chemistry, `${path}.chemistry`, ['c18', 'silica', 'diol', 'amino'], 'c18'),
   };
 }
 
@@ -142,8 +144,9 @@ function normalizeConditions(raw, path = 'conditions') {
     totalTime = parseNumber(totalRaw, `${path}.total_time_min`, { min: 1.0, max: 300.0 });
   }
   return {
+    phase: parseLiteral(raw.phase, `${path}.phase`, ['reversed', 'normal'], 'reversed'),
     mode: parseLiteral(raw.mode, `${path}.mode`, ['isocratic', 'gradient'], 'gradient'),
-    organic: parseLiteral(raw.organic, `${path}.organic`, ['ACN', 'MeOH'], 'ACN'),
+    organic: parseLiteral(raw.organic, `${path}.organic`, ['ACN', 'MeOH', 'IPA', 'EtOAc'], 'ACN'),
     percent_b: parseNumber(raw.percent_b, `${path}.percent_b`, { defaultValue: 50.0, min: 0.0, max: 100.0 }),
     gradient: normalizeGradient(raw.gradient, `${path}.gradient`),
     flow_ml_min: parseNumber(raw.flow_ml_min, `${path}.flow_ml_min`, { defaultValue: 1.0, min: 0.05, max: 5.0 }),
@@ -177,6 +180,8 @@ function normalizeCompound(raw, path) {
     concentration_mg_l: parseNumber(raw.concentration_mg_l, `${path}.concentration_mg_l`, { defaultValue: 100.0, min: 0.01, max: 10000.0 }),
     log_kw: parseNumber(raw.log_kw, `${path}.log_kw`, { defaultValue: null }),
     s_value: parseNumber(raw.s_value, `${path}.s_value`, { defaultValue: null }),
+    log_k_np: parseNumber(raw.log_k_np, `${path}.log_k_np`, { defaultValue: null }),
+    s_np: parseNumber(raw.s_np, `${path}.s_np`, { defaultValue: null }),
     epsilon_max: parseNumber(raw.epsilon_max, `${path}.epsilon_max`, { defaultValue: 1.0 }),
   };
 }
@@ -193,14 +198,15 @@ function normalizeCompoundList(raw, path, maxLength) {
 
 function normalizeConstraints(raw, path = 'constraints') {
   if (raw === undefined || raw === null) {
-    return { detector: 'UV', organic: 'auto', mode: 'auto', max_run_min: 40.0 };
+    return { detector: 'UV', phase: 'auto', organic: 'auto', mode: 'auto', max_run_min: 40.0 };
   }
   if (!isPlainObject(raw)) {
     throw new ValidationError(`${path} 必须是对象`);
   }
   return {
     detector: parseLiteral(raw.detector, `${path}.detector`, ['UV', 'MS'], 'UV'),
-    organic: parseLiteral(raw.organic, `${path}.organic`, ['auto', 'ACN', 'MeOH'], 'auto'),
+    phase: parseLiteral(raw.phase, `${path}.phase`, ['auto', 'reversed', 'normal'], 'auto'),
+    organic: parseLiteral(raw.organic, `${path}.organic`, ['auto', 'ACN', 'MeOH', 'IPA', 'EtOAc'], 'auto'),
     mode: parseLiteral(raw.mode, `${path}.mode`, ['auto', 'isocratic', 'gradient'], 'auto'),
     max_run_min: parseNumber(raw.max_run_min, `${path}.max_run_min`, { defaultValue: 40.0, min: 8.0, max: 120.0 }),
   };

@@ -36,9 +36,16 @@ from .models import Compound, Conditions
 R_GAS = 8.314462618
 WATER_VISC = 0.00089  # Pa.s at 25 C
 ORGANIC_PROPS = {
-    "ACN": {"visc": 0.00037, "dm": 0.060},   # Dm in mm^2/min
-    "MeOH": {"visc": 0.00055, "dm": 0.052},
+    "ACN": {"visc": 0.00037, "dm": 0.060, "label": "乙腈"},
+    "MeOH": {"visc": 0.00055, "dm": 0.052, "label": "甲醇"},
+    "IPA": {"visc": 0.00240, "dm": 0.045, "label": "异丙醇"},
+    "EtOAc": {"visc": 0.00043, "dm": 0.070, "label": "乙酸乙酯"},
 }
+PHASE_PROPS = {
+    "reversed": {"base_visc": WATER_VISC},
+    "normal": {"base_visc": 0.00030},  # n-hexane at 25 C
+}
+NP_REF_PHI = 0.10  # normal-phase reference: 10% polar modifier
 RESPONSE_SCALE = 6.0  # mAU*min per ug of injected mass at full absorptivity
 TAIL_RATIO = 0.18
 
@@ -68,9 +75,24 @@ def _s_value(compound: Compound, organic: str) -> float:
     return float(np.clip(3.0 + 0.10 * compound.log_p, 2.4, 4.8))
 
 
-def _temp_factor(compound: Compound, temperature_c: float) -> float:
+def _np_log_k_ref(compound: Compound) -> float:
+    """log k on a polar adsorbent at 10% polar modifier (normal phase)."""
+    if compound.log_k_np is not None:
+        return compound.log_k_np
+    # QSRR: polar analytes (low logP) are retained more strongly in NPLC.
+    return float(np.clip(1.55 - 0.42 * compound.log_p, -1.0, 3.2))
+
+
+def _np_s(compound: Compound) -> float:
+    if compound.s_np is not None:
+        return compound.s_np
+    return float(np.clip(7.5 + 0.25 * compound.log_p, 5.0, 11.0))
+
+
+def _temp_factor(compound: Compound, temperature_c: float, phase: str = "reversed") -> float:
     # Exothermic retention: dH is negative, so k falls as T rises.
-    d_h = -(13.0e3 + 2.0e3 * float(np.clip(compound.log_p, -1.0, 6.0)))
+    base_dh = 13.0e3 if phase == "reversed" else 8.0e3
+    d_h = -(base_dh + 2.0e3 * float(np.clip(compound.log_p, -1.0, 6.0)))
     t = temperature_c + 273.15
     return float(math.exp(d_h / R_GAS * (1.0 / 298.15 - 1.0 / t)))
 
@@ -136,16 +158,31 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
     plates = max(250.0, column.length_mm / plate_height_mm)
 
     n = len(compounds)
-    log_kw = np.array([_log_kw(c) for c in compounds])
-    s_values = np.array([_s_value(c, conditions.organic) for c in compounds])
-    neutral = np.array([_neutral_fraction(c, conditions.ph) for c in compounds])
-    temp_factor = np.array([_temp_factor(c, conditions.temperature_c) for c in compounds])
-    # Combined intercept: log k at phi = 0 for the actual pH / temperature.
-    log_k0 = (
-        log_kw
-        + np.log10(np.maximum(neutral, 1e-9))
-        + np.log10(np.maximum(temp_factor, 1e-9))
-    )
+    phase = conditions.phase
+    temp_factor = np.array([
+        _temp_factor(c, conditions.temperature_c, phase) for c in compounds
+    ])
+    if phase == "normal":
+        # NPLC: reference point is 10% polar modifier, retention decreases as
+        # the polar modifier fraction increases.  pH is not meaningful.
+        log_k_ref = np.array([_np_log_k_ref(c) for c in compounds])
+        s_values = np.array([_np_s(c) for c in compounds])
+        neutral = np.ones(n)
+        log_k0 = (
+            log_k_ref
+            + s_values * NP_REF_PHI
+            + np.log10(np.maximum(temp_factor, 1e-9))
+        )
+    else:
+        log_kw = np.array([_log_kw(c) for c in compounds])
+        s_values = np.array([_s_value(c, conditions.organic) for c in compounds])
+        neutral = np.array([_neutral_fraction(c, conditions.ph) for c in compounds])
+        # Combined intercept: log k at phi = 0 for the actual pH / temperature.
+        log_k0 = (
+            log_kw
+            + np.log10(np.maximum(neutral, 1e-9))
+            + np.log10(np.maximum(temp_factor, 1e-9))
+        )
 
     # --- run length -------------------------------------------------------
     if conditions.total_time_min:
@@ -295,7 +332,8 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
 
     # --- pressure & warnings ---------------------------------------------
     mean_phi = float(np.mean(composition)) / 100.0
-    eta = WATER_VISC + mean_phi * (ORGANIC_PROPS[conditions.organic]["visc"] - WATER_VISC)
+    base_visc = PHASE_PROPS[phase]["base_visc"]
+    eta = base_visc + mean_phi * (ORGANIC_PROPS[conditions.organic]["visc"] - base_visc)
     eta *= max(0.4, 1.0 - 0.021 * (conditions.temperature_c - 25.0))
     pressure_bar = 1600.0 * eta * column.length_mm * (u / 60.0) / (dp_mm ** 2) / 1e5
 
@@ -304,7 +342,7 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
     if not_eluted:
         warnings.append(
             "以下组分在运行时间内未洗脱：" + "、".join(not_eluted)
-            + "。建议提高有机相比例或延长运行时间。"
+            + "。建议提高强洗脱溶剂 B 的比例或延长运行时间。"
         )
     for p in peaks:
         if p["visible"] and p["k"] is not None and p["k"] < 1.0:
@@ -314,7 +352,7 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
     for p in peaks:
         if p["visible"] and p["k"] is not None and p["k"] > 20.0:
             warnings.append(
-                f"「{p['name']}」保留过强（k={p['k']:.1f}），峰形易展宽，建议增大有机相比例。"
+                f"「{p['name']}」保留过强（k={p['k']:.1f}），峰形易展宽，建议增大 B 比例。"
             )
     for i in range(1, len(visible_peaks)):
         cur = visible_peaks[i]
@@ -327,10 +365,27 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
             warnings.append(
                 f"「{c.name}」在 {conditions.wavelength_nm:.0f} nm 处摩尔吸光系数仅 {eps:.3f}，建议更换检测波长（λmax≈{c.lambda_max_nm:.0f} nm）或检测器。"
             )
-    for c in compounds:
-        if c.pka is not None and abs(conditions.ph - c.pka) < 0.5:
+    if phase == "reversed":
+        for c in compounds:
+            if c.pka is not None and abs(conditions.ph - c.pka) < 0.5:
+                warnings.append(
+                    f"pH {conditions.ph:.1f} 接近「{c.name}」的 pKa {c.pka:.1f}，保留时间对 pH 波动敏感。"
+                )
+        if column.chemistry != "c18":
             warnings.append(
-                f"pH {conditions.ph:.1f} 接近「{c.name}」的 pKa {c.pka:.1f}，保留时间对 pH 波动敏感。"
+                f"反相模型按 C18 校准，当前固定相为 {column.chemistry.upper()}，保留预测仅作相对参考。"
+            )
+    else:
+        if column.chemistry not in ("silica", "diol", "amino"):
+            warnings.append(
+                "正相模式建议使用硅胶、二醇或氨基柱；当前 C18 固定相不适合正相条件。"
+            )
+        ionizable = [c.name for c in compounds if c.pka is not None]
+        if ionizable:
+            warnings.append(
+                "正相不使用 pH 控制，以下组分具有可电离基团，可能与硅醇基强吸附或拖尾："
+                + "、".join(ionizable)
+                + "。建议使用氨基/二醇柱或加入少量极性添加剂。"
             )
     pressure_limit = 1000.0 if column.particle_um <= 2.5 else 400.0
     if pressure_bar > pressure_limit:
@@ -356,6 +411,8 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
         "wavelength_nm": float(conditions.wavelength_nm),
         "organic": conditions.organic,
         "mode": conditions.mode,
+        "phase": phase,
+        "chemistry": column.chemistry,
     }
 
     return {

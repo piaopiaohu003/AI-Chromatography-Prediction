@@ -56,6 +56,15 @@
           </div>
 
           <div class="field">
+            <div class="field-head"><label>色谱模式</label></div>
+            <div class="segmented" id="seg-phase">
+              <button data-value="reversed">反相 RPLC</button>
+              <button data-value="normal">正相 NPLC</button>
+            </div>
+            <p class="hint hidden" id="phase-note">正相模式不使用 pH 和缓冲盐；A 相为正己烷。</p>
+          </div>
+
+          <div class="field">
             <div class="field-head"><label>洗脱方式</label></div>
             <div class="segmented" id="seg-mode">
               <button data-value="isocratic">等度</button>
@@ -64,15 +73,12 @@
           </div>
 
           <div class="field">
-            <div class="field-head"><label>有机相</label></div>
-            <div class="segmented" id="seg-organic">
-              <button data-value="ACN">乙腈 ACN</button>
-              <button data-value="MeOH">甲醇 MeOH</button>
-            </div>
+            <div class="field-head"><label id="organic-label">有机相</label></div>
+            <div class="segmented" id="seg-organic"></div>
           </div>
 
           <div class="field" id="iso-field">
-            <div class="field-head"><label for="iso-slider">有机相比例 B</label><output id="iso-out">50%</output></div>
+            <div class="field-head"><label for="iso-slider" id="iso-label">有机相比例 B</label><output id="iso-out">50%</output></div>
             <input type="range" id="iso-slider" min="0" max="100" step="1" value="50">
           </div>
 
@@ -82,7 +88,7 @@
               <button class="mini-btn" id="btn-add-grad">+ 行</button>
             </div>
             <div class="gradient-list" id="gradient-list"></div>
-            <p class="hint">时间从 0 min 起，%B 为有机相体积分数</p>
+            <p class="hint" id="grad-hint">时间从 0 min 起，%B 为有机相体积分数</p>
           </div>
 
           <div class="field">
@@ -95,7 +101,7 @@
             <input type="range" id="temperature" data-key="temperature_c" min="15" max="60" step="1" value="30">
           </div>
 
-          <div class="field">
+          <div class="field" id="ph-field">
             <div class="field-head"><label for="ph">流动相 pH</label><output id="ph-out">2.5</output></div>
             <input type="range" id="ph" data-key="ph" min="1" max="12" step="0.1" value="2.5">
           </div>
@@ -111,7 +117,7 @@
               <output id="column-summary">C18 · 150 × 4.6 mm · 5 µm</output>
             </div>
             <select id="column-preset" class="column-select" aria-label="色谱柱预设"></select>
-            <p class="hint">切换预设会同时应用推荐流速与系统延迟体积</p>
+            <p class="hint" id="column-hint">切换预设会同时应用推荐流速与系统延迟体积</p>
           </div>
 
           <details class="advanced">
@@ -206,12 +212,16 @@
             </div>
           </div>
           <div class="field">
-            <div class="field-head"><label>有机相</label></div>
-            <div class="segmented" id="seg-ai-organic">
+            <div class="field-head"><label>色谱模式</label></div>
+            <div class="segmented" id="seg-ai-phase">
               <button data-value="auto">自动</button>
-              <button data-value="ACN">ACN</button>
-              <button data-value="MeOH">MeOH</button>
+              <button data-value="reversed">反相</button>
+              <button data-value="normal">正相</button>
             </div>
+          </div>
+          <div class="field">
+            <div class="field-head"><label>洗脱溶剂</label></div>
+            <div class="segmented" id="seg-ai-organic"></div>
           </div>
           <div class="field">
             <div class="field-head"><label>洗脱策略</label></div>
