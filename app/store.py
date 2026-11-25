@@ -33,7 +33,7 @@ DB_KEY = f"{KEY_PREFIX}:v1:db"
 
 
 def _empty_store() -> dict[str, Any]:
-    return {"version": 1, "users": [], "sessions": {}}
+    return {"version": 1, "users": [], "sessions": {}, "password_resets": {}}
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +54,8 @@ class _FileBackend:
             return _empty_store()
         if not isinstance(data.get("sessions"), dict):
             data["sessions"] = {}
+        if not isinstance(data.get("password_resets"), dict):
+            data["password_resets"] = {}
         return data
 
     def save(self, store: dict[str, Any]) -> None:
@@ -221,6 +223,8 @@ class _RedisBackend:
             return _empty_store()
         if not isinstance(data.get("sessions"), dict):
             data["sessions"] = {}
+        if not isinstance(data.get("password_resets"), dict):
+            data["password_resets"] = {}
         return data
 
     def save(self, store: dict[str, Any]) -> None:

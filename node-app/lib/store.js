@@ -35,11 +35,12 @@ class FileStore {
     try {
       const raw = fs.readFileSync(this.dbPath, 'utf8');
       const parsed = JSON.parse(raw);
-      if (!parsed || !Array.isArray(parsed.users)) return { version: 1, users: [], sessions: {} };
+      if (!parsed || !Array.isArray(parsed.users)) return { version: 1, users: [], sessions: {}, password_resets: {} };
       if (!parsed.sessions || typeof parsed.sessions !== 'object') parsed.sessions = {};
+      if (!parsed.password_resets || typeof parsed.password_resets !== 'object') parsed.password_resets = {};
       return parsed;
     } catch {
-      return { version: 1, users: [], sessions: {} };
+      return { version: 1, users: [], sessions: {}, password_resets: {} };
     }
   }
   async save(store) {
@@ -185,14 +186,15 @@ class RedisStore {
   }
   async load() {
     const raw = await this.client.command('GET', this.key);
-    if (!raw) return { version: 1, users: [], sessions: {} };
+    if (!raw) return { version: 1, users: [], sessions: {}, password_resets: {} };
     try {
       const parsed = JSON.parse(raw);
-      if (!parsed || !Array.isArray(parsed.users)) return { version: 1, users: [], sessions: {} };
+      if (!parsed || !Array.isArray(parsed.users)) return { version: 1, users: [], sessions: {}, password_resets: {} };
       if (!parsed.sessions || typeof parsed.sessions !== 'object') parsed.sessions = {};
+      if (!parsed.password_resets || typeof parsed.password_resets !== 'object') parsed.password_resets = {};
       return parsed;
     } catch {
-      return { version: 1, users: [], sessions: {} };
+      return { version: 1, users: [], sessions: {}, password_resets: {} };
     }
   }
   async save(store) {

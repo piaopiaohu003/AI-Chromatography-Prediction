@@ -8,9 +8,11 @@
 
 const crypto = require('crypto');
 const store = require('./store');
+const mailer = require('./mailer');
 
 const COOKIE_NAME = 'chromai_session';
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+const PASSWORD_RESET_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_PREFERENCES = {
   default_phase: 'reversed',
   default_organic: 'ACN',
@@ -53,6 +55,8 @@ async function bootstrapDemo() {
   s.users.push({
     id: demoId,
     username: DEMO_USER,
+    email: `${DEMO_USER.toLowerCase()}@chromai.local`,
+    email_verified: false,
     salt,
     password_hash: hashPassword(DEMO_PASS, salt),
     created_at: new Date().toISOString(),
@@ -96,7 +100,12 @@ async function bootstrapDemo() {
 }
 
 function publicUser(user) {
-  return { id: user.id, username: user.username, created_at: user.created_at };
+  return {
+    id: user.id,
+    username: user.username,
+    created_at: user.created_at,
+    email: user.email || null,
+  };
 }
 
 function ensureAccount(user) {
@@ -164,6 +173,14 @@ function normalizePassword(value) {
   return password;
 }
 
+function normalizeEmail(value) {
+  const email = String(value === undefined || value === null ? '' : value).trim().toLowerCase();
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new AuthError('邮箱格式不正确');
+  }
+  return email;
+}
+
 function hashPassword(password, salt) {
   return crypto.scryptSync(password, salt, 64).toString('hex');
 }
@@ -188,21 +205,31 @@ function pruneSessions(s) {
   });
 }
 
-async function register(usernameInput, passwordInput) {
+async function register(usernameInput, emailInput, passwordInput) {
   const username = normalizeUsername(usernameInput);
+  const email = normalizeEmail(emailInput);
   const password = normalizePassword(passwordInput);
   const s = await store.loadStore();
   pruneSessions(s);
+  prunePasswordResets(s);
   const exists = s.users.some(
     (user) => user.username.toLowerCase() === username.toLowerCase(),
   );
   if (exists) {
     throw new AuthError('该用户名已被注册', 409);
   }
+  const emailTaken = s.users.some(
+    (user) => String(user.email || '').toLowerCase() === email,
+  );
+  if (emailTaken) {
+    throw new AuthError('该邮箱已被注册，可直接找回密码', 409);
+  }
   const salt = crypto.randomBytes(16).toString('hex');
   const user = {
     id: crypto.randomUUID(),
     username,
+    email,
+    email_verified: false,
     salt,
     password_hash: hashPassword(password, salt),
     created_at: new Date().toISOString(),
@@ -259,6 +286,98 @@ async function logout(token) {
     delete s.sessions[token];
     await store.saveStore(s);
   }
+}
+
+function prunePasswordResets(s) {
+  const now = Date.now();
+  Object.keys(s.password_resets).forEach((token) => {
+    const entry = s.password_resets[token];
+    if (!entry || !entry.expires_at || entry.expires_at <= now) {
+      delete s.password_resets[token];
+    }
+  });
+}
+
+async function requestPasswordReset(emailInput) {
+  const email = normalizeEmail(emailInput);
+  const s = await store.loadStore();
+  prunePasswordResets(s);
+  const user = s.users.find((item) => String(item.email || '').toLowerCase() === email);
+  // Always answer { ok: true } so the endpoint cannot be used to enumerate
+  // which emails are registered.
+  if (!user) {
+    await store.saveStore(s);
+    return { ok: true };
+  }
+  Object.keys(s.password_resets).forEach((token) => {
+    if (s.password_resets[token] && s.password_resets[token].user_id === user.id) {
+      delete s.password_resets[token];
+    }
+  });
+  const token = crypto.randomBytes(24).toString('hex');
+  s.password_resets[token] = {
+    user_id: user.id,
+    expires_at: Date.now() + PASSWORD_RESET_TTL_MS,
+  };
+  await store.saveStore(s);
+
+  let mailed = { sent: false, reason: 'smtp-not-configured' };
+  try {
+    mailed = await mailer.sendMail({
+      to: email,
+      subject: 'ChromAI 密码重置',
+      text: [
+        `你好 ${user.username}，`,
+        '',
+        '我们收到了你的密码重置请求。请在 30 分钟内使用以下重置令牌完成密码重置：',
+        '',
+        `    ${token}`,
+        '',
+        '如果这不是你的操作，请忽略本邮件，你的密码不会改变。',
+        '',
+        '— ChromAI',
+      ].join('\n'),
+    });
+  } catch (err) {
+    mailed = { sent: false, reason: err && err.message ? err.message : String(err) };
+    console.warn(`[chromai.auth] password reset mail failed: ${mailed.reason}`);
+  }
+  const result = { ok: true, mail_sent: Boolean(mailed.sent) };
+  if (!mailed.sent) {
+    // No SMTP configured (or sending failed) — surface the token so the
+    // deployment stays usable. Operators should set CHROM_SMTP_URL to
+    // deliver resets by email instead.
+    result.debug_token = token;
+    console.log(`[chromai.auth] password reset token for ${email}: ${token}`);
+  }
+  return result;
+}
+
+async function resetPassword(tokenInput, newPasswordInput) {
+  const token = String(tokenInput === undefined || tokenInput === null ? '' : tokenInput).trim();
+  if (!token) {
+    throw new AuthError('缺少重置令牌');
+  }
+  const s = await store.loadStore();
+  prunePasswordResets(s);
+  const entry = s.password_resets[token];
+  if (!entry) {
+    throw new AuthError('重置令牌无效或已过期', 400);
+  }
+  const user = findUser(s, entry.user_id);
+  const password = normalizePassword(newPasswordInput);
+  const salt = crypto.randomBytes(16).toString('hex');
+  user.salt = salt;
+  user.password_hash = hashPassword(password, salt);
+  // Invalidate every session and every reset token of this account.
+  Object.keys(s.sessions).forEach((t) => {
+    if (s.sessions[t] && s.sessions[t].user_id === user.id) delete s.sessions[t];
+  });
+  Object.keys(s.password_resets).forEach((t) => {
+    if (s.password_resets[t] && s.password_resets[t].user_id === user.id) delete s.password_resets[t];
+  });
+  await store.saveStore(s);
+  return { ok: true };
 }
 
 async function getAccount(userId) {
@@ -476,6 +595,8 @@ module.exports = {
   changePassword,
   addFavorite,
   deleteFavorite,
+  requestPasswordReset,
+  resetPassword,
   listLiteratureTopics,
   addLiteratureTopic,
   deleteLiteratureTopic,
