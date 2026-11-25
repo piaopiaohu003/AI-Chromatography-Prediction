@@ -1,13 +1,13 @@
 'use strict';
 
 /* Minimal account system for the ChromAI demo deployment.
- * Accounts and sessions are persisted to a JSON file in the runtime temp
- * directory because the deployment bundle itself is read-only.  Passwords are
- * stored as scrypt hashes with a per-user random salt. */
+ * Accounts and sessions are persisted via lib/store.js which picks Redis
+ * (REDIS_URL/REDIS_HOST) or a local JSON file on startup. Passwords are
+ * stored as scrypt hashes with a per-user random salt. All public functions
+ * are async because the underlying store may talk to Redis. */
 
 const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
+const store = require('./store');
 
 const COOKIE_NAME = 'chromai_session';
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -23,8 +23,6 @@ const PHASE_ORGANICS = {
 };
 const MAX_FAVORITES = 30;
 const MAX_LITERATURE_TOPICS = 12;
-const DB_PATH = process.env.CHROM_USER_DB
-  || path.join(process.env.TMPDIR || '/tmp', 'chromai-users.json');
 
 class AuthError extends Error {
   constructor(message, status = 400) {
@@ -34,14 +32,11 @@ class AuthError extends Error {
   }
 }
 
-function emptyStore() {
-  return { version: 1, users: [], sessions: {} };
-}
-
-function bootstrapDemo() {
+async function bootstrapDemo() {
   // Pre-seed the demo account on cold start so that redeployments, which wipe
   // the ephemeral runtime /tmp directory, still allow the documented demo /
   // ChromAI2026 credentials to work without manual re-registration.
+  // No-op if the demo user already exists or the seed vars are misconfigured.
   const DEMO_USER = process.env.CHROM_DEMO_USER || 'demo';
   const DEMO_PASS = process.env.CHROM_DEMO_PASS || 'ChromAI2026';
   if (!DEMO_USER || !DEMO_PASS) return;
@@ -51,11 +46,11 @@ function bootstrapDemo() {
   } catch {
     return;
   }
-  const store = loadStore();
-  if (store.users.some((u) => u.username.toLowerCase() === DEMO_USER.toLowerCase())) return;
+  const s = await store.loadStore();
+  if (s.users.some((u) => u.username.toLowerCase() === DEMO_USER.toLowerCase())) return;
   const salt = crypto.randomBytes(16).toString('hex');
   const demoId = crypto.randomUUID();
-  store.users.push({
+  s.users.push({
     id: demoId,
     username: DEMO_USER,
     salt,
@@ -96,28 +91,8 @@ function bootstrapDemo() {
     ],
     literature_watch: [],
   });
-  saveStore(store);
-}
-bootstrapDemo();
-
-function loadStore() {
-  try {
-    const raw = fs.readFileSync(DB_PATH, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (!parsed || !Array.isArray(parsed.users)) return emptyStore();
-    if (!parsed.sessions || typeof parsed.sessions !== 'object') parsed.sessions = {};
-    return parsed;
-  } catch (err) {
-    return emptyStore();
-  }
-}
-
-function saveStore(store) {
-  const dir = path.dirname(DB_PATH);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmp = `${DB_PATH}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf8');
-  fs.renameSync(tmp, DB_PATH);
+  await store.saveStore(s);
+  console.log(`[chromai.auth] Bootstrapped demo user "${DEMO_USER}"`);
 }
 
 function publicUser(user) {
@@ -135,8 +110,8 @@ function ensureAccount(user) {
   return user;
 }
 
-function findUser(store, userId) {
-  const user = store.users.find((item) => item.id === userId);
+function findUser(s, userId) {
+  const user = s.users.find((item) => item.id === userId);
   if (!user) throw new AuthError('用户不存在', 404);
   return ensureAccount(user);
 }
@@ -193,32 +168,32 @@ function hashPassword(password, salt) {
   return crypto.scryptSync(password, salt, 64).toString('hex');
 }
 
-function issueSession(store, userId) {
-  pruneSessions(store);
+function issueSession(s, userId) {
+  pruneSessions(s);
   const token = crypto.randomBytes(32).toString('hex');
-  store.sessions[token] = {
+  s.sessions[token] = {
     user_id: userId,
     expires_at: Date.now() + SESSION_TTL_SECONDS * 1000,
   };
   return token;
 }
 
-function pruneSessions(store) {
+function pruneSessions(s) {
   const now = Date.now();
-  Object.keys(store.sessions).forEach((token) => {
-    const session = store.sessions[token];
+  Object.keys(s.sessions).forEach((token) => {
+    const session = s.sessions[token];
     if (!session || !session.expires_at || session.expires_at <= now) {
-      delete store.sessions[token];
+      delete s.sessions[token];
     }
   });
 }
 
-function register(usernameInput, passwordInput) {
+async function register(usernameInput, passwordInput) {
   const username = normalizeUsername(usernameInput);
   const password = normalizePassword(passwordInput);
-  const store = loadStore();
-  pruneSessions(store);
-  const exists = store.users.some(
+  const s = await store.loadStore();
+  pruneSessions(s);
+  const exists = s.users.some(
     (user) => user.username.toLowerCase() === username.toLowerCase(),
   );
   if (exists) {
@@ -234,20 +209,20 @@ function register(usernameInput, passwordInput) {
     preferences: { ...DEFAULT_PREFERENCES },
     favorites: [],
   };
-  store.users.push(user);
-  const token = issueSession(store, user.id);
-  saveStore(store);
+  s.users.push(user);
+  const token = issueSession(s, user.id);
+  await store.saveStore(s);
   return { user: publicUser(user), token };
 }
 
-function login(usernameInput, passwordInput) {
+async function login(usernameInput, passwordInput) {
   const username = String(usernameInput === undefined || usernameInput === null ? '' : usernameInput).trim();
   const password = String(passwordInput === undefined || passwordInput === null ? '' : passwordInput);
   if (!username || !password) {
     throw new AuthError('请输入用户名和密码');
   }
-  const store = loadStore();
-  const user = store.users.find(
+  const s = await store.loadStore();
+  const user = s.users.find(
     (item) => item.username.toLowerCase() === username.toLowerCase(),
   );
   const salt = user ? user.salt : '00000000000000000000000000000000';
@@ -257,38 +232,38 @@ function login(usernameInput, passwordInput) {
   if (!user || !matches) {
     throw new AuthError('用户名或密码错误', 401);
   }
-  pruneSessions(store);
-  const token = issueSession(store, user.id);
-  saveStore(store);
+  pruneSessions(s);
+  const token = issueSession(s, user.id);
+  await store.saveStore(s);
   return { user: publicUser(user), token };
 }
 
-function currentUser(token) {
+async function currentUser(token) {
   if (!token) return null;
-  const store = loadStore();
-  const session = store.sessions[token];
+  const s = await store.loadStore();
+  const session = s.sessions[token];
   if (!session) return null;
   if (!session.expires_at || session.expires_at <= Date.now()) {
-    delete store.sessions[token];
-    saveStore(store);
+    delete s.sessions[token];
+    await store.saveStore(s);
     return null;
   }
-  const user = store.users.find((item) => item.id === session.user_id);
+  const user = s.users.find((item) => item.id === session.user_id);
   return user ? publicUser(user) : null;
 }
 
-function logout(token) {
+async function logout(token) {
   if (!token) return;
-  const store = loadStore();
-  if (store.sessions[token]) {
-    delete store.sessions[token];
-    saveStore(store);
+  const s = await store.loadStore();
+  if (s.sessions[token]) {
+    delete s.sessions[token];
+    await store.saveStore(s);
   }
 }
 
-function getAccount(userId) {
-  const store = loadStore();
-  const user = findUser(store, userId);
+async function getAccount(userId) {
+  const s = await store.loadStore();
+  const user = findUser(s, userId);
   return {
     user: publicUser(user),
     preferences: { ...user.preferences },
@@ -297,18 +272,18 @@ function getAccount(userId) {
   };
 }
 
-function updatePreferences(userId, patch) {
+async function updatePreferences(userId, patch) {
   const preferences = normalizePreferences(patch);
-  const store = loadStore();
-  const user = findUser(store, userId);
+  const s = await store.loadStore();
+  const user = findUser(s, userId);
   user.preferences = preferences;
-  saveStore(store);
+  await store.saveStore(s);
   return { ...preferences };
 }
 
-function changePassword(userId, currentToken, currentPassword, newPassword) {
-  const store = loadStore();
-  const user = findUser(store, userId);
+async function changePassword(userId, currentToken, currentPassword, newPassword) {
+  const s = await store.loadStore();
+  const user = findUser(s, userId);
   if (!verifyPassword(user, currentPassword)) {
     throw new AuthError('当前密码不正确', 400);
   }
@@ -319,18 +294,17 @@ function changePassword(userId, currentToken, currentPassword, newPassword) {
   const salt = crypto.randomBytes(16).toString('hex');
   user.salt = salt;
   user.password_hash = hashPassword(password, salt);
-  // Invalidate every other session of this account.
-  Object.keys(store.sessions).forEach((token) => {
-    const session = store.sessions[token];
+  Object.keys(s.sessions).forEach((token) => {
+    const session = s.sessions[token];
     if (session && session.user_id === userId && token !== currentToken) {
-      delete store.sessions[token];
+      delete s.sessions[token];
     }
   });
-  saveStore(store);
+  await store.saveStore(s);
   return { ok: true };
 }
 
-function addFavorite(userId, payload) {
+async function addFavorite(userId, payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new AuthError('收藏内容格式不正确');
   }
@@ -346,8 +320,8 @@ function addFavorite(userId, payload) {
   } else {
     throw new AuthError('缺少色谱条件');
   }
-  const store = loadStore();
-  const user = findUser(store, userId);
+  const s = await store.loadStore();
+  const user = findUser(s, userId);
   if (user.favorites.length >= MAX_FAVORITES) {
     throw new AuthError(`最多保存 ${MAX_FAVORITES} 个收藏`);
   }
@@ -359,19 +333,19 @@ function addFavorite(userId, payload) {
     created_at: new Date().toISOString(),
   };
   user.favorites.unshift(favorite);
-  saveStore(store);
+  await store.saveStore(s);
   return { favorite: { ...favorite } };
 }
 
-function deleteFavorite(userId, favoriteId) {
-  const store = loadStore();
-  const user = findUser(store, userId);
+async function deleteFavorite(userId, favoriteId) {
+  const s = await store.loadStore();
+  const user = findUser(s, userId);
   const index = user.favorites.findIndex((item) => item.id === favoriteId);
   if (index === -1) {
     throw new AuthError('收藏不存在', 404);
   }
   const [removed] = user.favorites.splice(index, 1);
-  saveStore(store);
+  await store.saveStore(s);
   return { ok: true, id: removed.id };
 }
 
@@ -403,16 +377,16 @@ function normalizeLiteratureTopic(payload) {
   return { name, query };
 }
 
-function listLiteratureTopics(userId) {
-  const store = loadStore();
-  const user = findUser(store, userId);
+async function listLiteratureTopics(userId) {
+  const s = await store.loadStore();
+  const user = findUser(s, userId);
   return { topics: user.literature_watch.map((item) => literatureTopicMeta(item)) };
 }
 
-function addLiteratureTopic(userId, payload) {
+async function addLiteratureTopic(userId, payload) {
   const { name, query } = normalizeLiteratureTopic(payload);
-  const store = loadStore();
-  const user = findUser(store, userId);
+  const s = await store.loadStore();
+  const user = findUser(s, userId);
   if (user.literature_watch.length >= MAX_LITERATURE_TOPICS) {
     throw new AuthError(`最多创建 ${MAX_LITERATURE_TOPICS} 个文献监控主题`);
   }
@@ -431,25 +405,25 @@ function addLiteratureTopic(userId, payload) {
     last_error: null,
   };
   user.literature_watch.unshift(topic);
-  saveStore(store);
+  await store.saveStore(s);
   return { topic: literatureTopicMeta(topic) };
 }
 
-function deleteLiteratureTopic(userId, topicId) {
-  const store = loadStore();
-  const user = findUser(store, userId);
+async function deleteLiteratureTopic(userId, topicId) {
+  const s = await store.loadStore();
+  const user = findUser(s, userId);
   const index = user.literature_watch.findIndex((item) => item.id === topicId);
   if (index === -1) {
     throw new AuthError('监控主题不存在', 404);
   }
   const [removed] = user.literature_watch.splice(index, 1);
-  saveStore(store);
+  await store.saveStore(s);
   return { ok: true, id: removed.id };
 }
 
-function getLiteratureTopic(userId, topicId) {
-  const store = loadStore();
-  const user = findUser(store, userId);
+async function getLiteratureTopic(userId, topicId) {
+  const s = await store.loadStore();
+  const user = findUser(s, userId);
   const topic = user.literature_watch.find((item) => item.id === topicId);
   if (!topic) {
     throw new AuthError('监控主题不存在', 404);
@@ -461,9 +435,9 @@ function getLiteratureTopic(userId, topicId) {
   };
 }
 
-function saveLiteratureScan(userId, topicId, scan, errorMessage) {
-  const store = loadStore();
-  const user = findUser(store, userId);
+async function saveLiteratureScan(userId, topicId, scan, errorMessage) {
+  const s = await store.loadStore();
+  const user = findUser(s, userId);
   const topic = user.literature_watch.find((item) => item.id === topicId);
   if (!topic) {
     throw new AuthError('监控主题不存在', 404);
@@ -479,7 +453,7 @@ function saveLiteratureScan(userId, topicId, scan, errorMessage) {
     topic.last_error = String(errorMessage || '扫描失败').slice(0, 200);
     topic.new_ids = [];
   }
-  saveStore(store);
+  await store.saveStore(s);
   return {
     topic: literatureTopicMeta(topic),
     items: scan ? scan.items : (topic.items || []),
@@ -491,8 +465,8 @@ module.exports = {
   AuthError,
   COOKIE_NAME,
   SESSION_TTL_SECONDS,
-  DB_PATH,
   DEFAULT_PREFERENCES,
+  bootstrapDemo,
   register,
   login,
   logout,

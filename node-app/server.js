@@ -16,6 +16,7 @@ const models = require('./lib/models');
 const pubchem = require('./lib/pubchem');
 const literature = require('./lib/literature');
 const auth = require('./lib/auth');
+const store = require('./lib/store');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const STATIC_DIR = path.join(PUBLIC_DIR, 'static');
@@ -182,7 +183,7 @@ async function handleApi(req, res, pathname) {
     }
     try {
       const action = pathname === '/api/auth/register' ? auth.register : auth.login;
-      const { user, token } = action(body.username, body.password);
+      const { user, token } = await action(body.username, body.password);
       return sendJson(
         res,
         200,
@@ -201,7 +202,7 @@ async function handleApi(req, res, pathname) {
     if (method !== 'POST') {
       return sendError(res, 405, 'Method Not Allowed');
     }
-    auth.logout(readCookie(req, auth.COOKIE_NAME));
+    await auth.logout(readCookie(req, auth.COOKIE_NAME));
     return sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
   }
 
@@ -209,7 +210,7 @@ async function handleApi(req, res, pathname) {
     if (method !== 'GET') {
       return sendError(res, 405, 'Method Not Allowed');
     }
-    const user = auth.currentUser(readCookie(req, auth.COOKIE_NAME));
+    const user = await auth.currentUser(readCookie(req, auth.COOKIE_NAME));
     if (!user) {
       return sendError(res, 401, '请先登录');
     }
@@ -224,33 +225,33 @@ async function handleApi(req, res, pathname) {
   ];
   const isFavoriteDelete = pathname.startsWith('/api/account/favorites/');
   if (accountPaths.includes(pathname) || isFavoriteDelete) {
-    const user = auth.currentUser(readCookie(req, auth.COOKIE_NAME));
+    const user = await auth.currentUser(readCookie(req, auth.COOKIE_NAME));
     if (!user) {
       return sendError(res, 401, '请先登录');
     }
     try {
       if (pathname === '/api/account' && method === 'GET') {
-        return sendJson(res, 200, auth.getAccount(user.id));
+        return sendJson(res, 200, await auth.getAccount(user.id));
       }
       if (pathname === '/api/account/preferences' && method === 'PUT') {
         const body = await readJsonBody(req);
         return sendJson(res, 200, {
-          preferences: auth.updatePreferences(user.id, body),
+          preferences: await auth.updatePreferences(user.id, body),
         });
       }
       if (pathname === '/api/account/password' && method === 'POST') {
         const body = await readJsonBody(req);
         const token = readCookie(req, auth.COOKIE_NAME);
-        auth.changePassword(user.id, token, body.current_password, body.new_password);
+        await auth.changePassword(user.id, token, body.current_password, body.new_password);
         return sendJson(res, 200, { ok: true });
       }
       if (pathname === '/api/account/favorites' && method === 'POST') {
         const body = await readJsonBody(req);
-        return sendJson(res, 200, auth.addFavorite(user.id, body));
+        return sendJson(res, 200, await auth.addFavorite(user.id, body));
       }
       if (isFavoriteDelete && method === 'DELETE') {
         const favoriteId = pathname.split('/').pop();
-        return sendJson(res, 200, auth.deleteFavorite(user.id, favoriteId));
+        return sendJson(res, 200, await auth.deleteFavorite(user.id, favoriteId));
       }
       return sendError(res, 405, 'Method Not Allowed');
     } catch (err) {
@@ -268,7 +269,7 @@ async function handleApi(req, res, pathname) {
     '/api/ai/test',
   ];
   if (protectedPaths.includes(pathname)) {
-    const user = auth.currentUser(readCookie(req, auth.COOKIE_NAME));
+    const user = await auth.currentUser(readCookie(req, auth.COOKIE_NAME));
     if (!user) {
       return sendError(res, 401, '请先登录');
     }
@@ -307,7 +308,7 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === '/api/literature/search' || pathname.startsWith('/api/literature/watch')) {
-    const user = auth.currentUser(readCookie(req, auth.COOKIE_NAME));
+    const user = await auth.currentUser(readCookie(req, auth.COOKIE_NAME));
     if (!user) {
       return sendError(res, 401, '请先登录');
     }
@@ -339,31 +340,31 @@ async function handleApi(req, res, pathname) {
   if (watchMatch) {
     const topicId = watchMatch[1];
     const action = watchMatch[2];
-    const user = auth.currentUser(readCookie(req, auth.COOKIE_NAME));
+    const user = await auth.currentUser(readCookie(req, auth.COOKIE_NAME));
     try {
       if (!topicId) {
         if (method === 'GET') {
-          return sendJson(res, 200, auth.listLiteratureTopics(user.id));
+          return sendJson(res, 200, await auth.listLiteratureTopics(user.id));
         }
         if (method === 'POST') {
           const body = await readJsonBody(req);
-          return sendJson(res, 200, auth.addLiteratureTopic(user.id, body));
+          return sendJson(res, 200, await auth.addLiteratureTopic(user.id, body));
         }
         return sendError(res, 405, 'Method Not Allowed');
       }
       if (action === 'items' && method === 'GET') {
-        const data = auth.getLiteratureTopic(user.id, topicId);
+        const data = await auth.getLiteratureTopic(user.id, topicId);
         return sendJson(res, 200, { topic: data.topic, items: data.items });
       }
       if (action === 'scan' && method === 'POST') {
-        const current = auth.getLiteratureTopic(user.id, topicId);
+        const current = await auth.getLiteratureTopic(user.id, topicId);
         try {
           const scan = await literature.scanTopic(current.topic.query, current.seen_ids, {
             baseline: !current.topic.last_scan_at,
           });
-          return sendJson(res, 200, auth.saveLiteratureScan(user.id, topicId, scan));
+          return sendJson(res, 200, await auth.saveLiteratureScan(user.id, topicId, scan));
         } catch (err) {
-          const saved = auth.saveLiteratureScan(
+          const saved = await auth.saveLiteratureScan(
             user.id,
             topicId,
             null,
@@ -376,7 +377,7 @@ async function handleApi(req, res, pathname) {
         }
       }
       if (!action && method === 'DELETE') {
-        return sendJson(res, 200, auth.deleteLiteratureTopic(user.id, topicId));
+        return sendJson(res, 200, await auth.deleteLiteratureTopic(user.id, topicId));
       }
       return sendError(res, 405, 'Method Not Allowed');
     } catch (err) {
@@ -548,6 +549,16 @@ const server = http.createServer((req, res) => {
 const PORT = Number(process.env.PORT) || 8000;
 const HOST = '0.0.0.0';
 
-server.listen(PORT, HOST, () => {
+async function main() {
+  // Wait for the store backend to finish probing (file or Redis), then
+  // seed the demo account before accepting any requests.
+  await store.storePromise;
+  await auth.bootstrapDemo();
+  await new Promise((resolve) => server.listen(PORT, HOST, resolve));
   process.stdout.write(`ChromAI Node server listening on http://${HOST}:${PORT}\n`);
+}
+
+main().catch((err) => {
+  console.error('[chromai] Failed to start server:', err);
+  process.exit(1);
 });

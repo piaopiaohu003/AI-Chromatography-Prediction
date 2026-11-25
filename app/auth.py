@@ -1,4 +1,10 @@
-"""Local account system with scrypt password hashing and file-backed sessions."""
+"""Local account system with scrypt password hashing.
+
+Persistence is delegated to :mod:`app.store`, which picks Redis
+(REDIS_URL/REDIS_HOST) or a local JSON file on import.  Functions are
+intentionally **synchronous** so the FastAPI route handlers can stay
+plain ``def`` without any ``async`` ceremony.
+"""
 
 from __future__ import annotations
 
@@ -7,18 +13,14 @@ import json
 import os
 import re
 import secrets
-import tempfile
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
+
+from .store import load_store, save_store
 
 COOKIE_NAME = "chromai_session"
 SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
-DB_PATH = Path(
-    os.getenv("CHROM_USER_DB")
-    or (Path(tempfile.gettempdir()) / "chromai-users.json")
-)
 USERNAME_RE = re.compile(r"^[\w\u4e00-\u9fa5.-]{3,24}$", re.UNICODE)
 DEFAULT_PREFERENCES = {
     "default_phase": "reversed",
@@ -43,17 +45,14 @@ class AuthError(Exception):
         self.status = status
 
 
-def _empty_store() -> dict:
-    return {"version": 1, "users": [], "sessions": {}}
-
-
 def _bootstrap_demo() -> None:
     """Pre-seed the demo account on cold start.
 
     Deployments run on ephemeral filesystems (runtime /tmp) — every
-    redeployment wipes the user database. We want the documented demo /
-    ChromAI2026 credentials to still work, so we create the demo user
-    lazily whenever it is missing from the store.
+    redeployment wipes the user database.  With Redis we no longer need
+    this as a persistence workaround, but keeping the seed means the
+    documented demo / ChromAI2026 credentials still work on a brand-new
+    Redis instance without anyone having to register manually.
     """
 
     DEMO_USER = os.getenv("CHROM_DEMO_USER") or "demo"
@@ -63,7 +62,7 @@ def _bootstrap_demo() -> None:
         _normalize_password(DEMO_PASS)
     except AuthError:
         return
-    store = _load_store()
+    store = load_store()
     if any(
         u.get("username", "").lower() == DEMO_USER.lower()
         for u in store.get("users", [])
@@ -114,29 +113,10 @@ def _bootstrap_demo() -> None:
         "favorites": favorites,
         "literature_watch": [],
     })
-    _save_store(store)
+    save_store(store)
 
 
 _bootstrap_demo()
-
-
-def _load_store() -> dict:
-    try:
-        data = json.loads(DB_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return _empty_store()
-    if not isinstance(data, dict) or not isinstance(data.get("users"), list):
-        return _empty_store()
-    if not isinstance(data.get("sessions"), dict):
-        data["sessions"] = {}
-    return data
-
-
-def _save_store(store: dict) -> None:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = DB_PATH.with_name(f"{DB_PATH.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(store, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(DB_PATH)
 
 
 def _public_user(user: dict) -> dict:
@@ -194,7 +174,7 @@ def _issue_session(store: dict, user_id: str) -> str:
 def register(username_value: object, password_value: object) -> tuple[dict, str]:
     username = _normalize_username(username_value)
     password = _normalize_password(password_value)
-    store = _load_store()
+    store = load_store()
     _prune_sessions(store)
     if any(user["username"].lower() == username.lower() for user in store["users"]):
         raise AuthError("该用户名已被注册", 409)
@@ -210,7 +190,7 @@ def register(username_value: object, password_value: object) -> tuple[dict, str]
     }
     store["users"].append(user)
     token = _issue_session(store, user["id"])
-    _save_store(store)
+    save_store(store)
     return _public_user(user), token
 
 
@@ -219,7 +199,7 @@ def login(username_value: object, password_value: object) -> tuple[dict, str]:
     password = str(password_value) if password_value is not None else ""
     if not username or not password:
         raise AuthError("请输入用户名和密码")
-    store = _load_store()
+    store = load_store()
     user = next(
         (item for item in store["users"] if item["username"].lower() == username.lower()),
         None,
@@ -231,21 +211,21 @@ def login(username_value: object, password_value: object) -> tuple[dict, str]:
         raise AuthError("用户名或密码错误", 401)
     _prune_sessions(store)
     token = _issue_session(store, user["id"])
-    _save_store(store)
+    save_store(store)
     return _public_user(user), token
 
 
 def current_user(token: Optional[str]) -> Optional[dict]:
     if not token:
         return None
-    store = _load_store()
+    store = load_store()
     session = store["sessions"].get(token)
     if not session:
         return None
     now = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
     if int(session.get("expires_at", 0)) <= now:
         store["sessions"].pop(token, None)
-        _save_store(store)
+        save_store(store)
         return None
     user = next((item for item in store["users"] if item["id"] == session["user_id"]), None)
     return _public_user(user) if user else None
@@ -254,9 +234,9 @@ def current_user(token: Optional[str]) -> Optional[dict]:
 def logout(token: Optional[str]) -> None:
     if not token:
         return
-    store = _load_store()
+    store = load_store()
     if store["sessions"].pop(token, None) is not None:
-        _save_store(store)
+        save_store(store)
 
 
 def _ensure_account(user: dict) -> dict:
@@ -307,7 +287,7 @@ def _normalize_preferences(patch: object) -> dict:
 
 
 def get_account(user_id: str) -> dict:
-    store = _load_store()
+    store = load_store()
     user = _find_user(store, user_id)
     return {
         "user": _public_user(user),
@@ -319,10 +299,10 @@ def get_account(user_id: str) -> dict:
 
 def update_preferences(user_id: str, patch: object) -> dict:
     preferences = _normalize_preferences(patch)
-    store = _load_store()
+    store = load_store()
     user = _find_user(store, user_id)
     user["preferences"] = preferences
-    _save_store(store)
+    save_store(store)
     return dict(preferences)
 
 
@@ -332,7 +312,7 @@ def change_password(
     current_password: object,
     new_password: object,
 ) -> None:
-    store = _load_store()
+    store = load_store()
     user = _find_user(store, user_id)
     given = str(current_password) if current_password is not None else ""
     if not secrets.compare_digest(user["password_hash"], _hash_password(given, user["salt"])):
@@ -347,7 +327,7 @@ def change_password(
         session = store["sessions"].get(token) or {}
         if session.get("user_id") == user_id and token != current_token:
             store["sessions"].pop(token, None)
-    _save_store(store)
+    save_store(store)
 
 
 def add_favorite(user_id: str, payload: object) -> dict:
@@ -361,7 +341,7 @@ def add_favorite(user_id: str, payload: object) -> dict:
         raise AuthError("缺少色谱条件")
     if len(json.dumps(conditions, ensure_ascii=False)) > 60000:
         raise AuthError("收藏的色谱条件过大")
-    store = _load_store()
+    store = load_store()
     user = _find_user(store, user_id)
     if len(user["favorites"]) >= MAX_FAVORITES:
         raise AuthError(f"最多保存 {MAX_FAVORITES} 个收藏")
@@ -373,17 +353,17 @@ def add_favorite(user_id: str, payload: object) -> dict:
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
     }
     user["favorites"].insert(0, favorite)
-    _save_store(store)
+    save_store(store)
     return {"favorite": dict(favorite)}
 
 
 def delete_favorite(user_id: str, favorite_id: str) -> dict:
-    store = _load_store()
+    store = load_store()
     user = _find_user(store, user_id)
     for index, item in enumerate(user["favorites"]):
         if item.get("id") == favorite_id:
             user["favorites"].pop(index)
-            _save_store(store)
+            save_store(store)
             return {"ok": True, "id": favorite_id}
     raise AuthError("收藏不存在", 404)
 
@@ -414,14 +394,14 @@ def _normalize_literature_topic(payload: object) -> tuple[str, str]:
 
 
 def list_literature_topics(user_id: str) -> dict:
-    store = _load_store()
+    store = load_store()
     user = _find_user(store, user_id)
     return {"topics": [_literature_topic_meta(item) for item in user["literature_watch"]]}
 
 
 def add_literature_topic(user_id: str, payload: object) -> dict:
     name, query = _normalize_literature_topic(payload)
-    store = _load_store()
+    store = load_store()
     user = _find_user(store, user_id)
     if len(user["literature_watch"]) >= MAX_LITERATURE_TOPICS:
         raise AuthError(f"最多创建 {MAX_LITERATURE_TOPICS} 个文献监控主题")
@@ -439,23 +419,23 @@ def add_literature_topic(user_id: str, payload: object) -> dict:
         "last_error": None,
     }
     user["literature_watch"].insert(0, topic)
-    _save_store(store)
+    save_store(store)
     return {"topic": _literature_topic_meta(topic)}
 
 
 def delete_literature_topic(user_id: str, topic_id: str) -> dict:
-    store = _load_store()
+    store = load_store()
     user = _find_user(store, user_id)
     for index, item in enumerate(user["literature_watch"]):
         if item.get("id") == topic_id:
             user["literature_watch"].pop(index)
-            _save_store(store)
+            save_store(store)
             return {"ok": True, "id": topic_id}
     raise AuthError("监控主题不存在", 404)
 
 
 def get_literature_topic(user_id: str, topic_id: str) -> dict:
-    store = _load_store()
+    store = load_store()
     user = _find_user(store, user_id)
     topic = next((item for item in user["literature_watch"] if item["id"] == topic_id), None)
     if not topic:
@@ -470,7 +450,7 @@ def get_literature_topic(user_id: str, topic_id: str) -> dict:
 def save_literature_scan(
     user_id: str, topic_id: str, scan: Optional[dict], error_message: Optional[str] = None
 ) -> dict:
-    store = _load_store()
+    store = load_store()
     user = _find_user(store, user_id)
     topic = next((item for item in user["literature_watch"] if item["id"] == topic_id), None)
     if not topic:
@@ -485,7 +465,7 @@ def save_literature_scan(
         topic["last_scan_at"] = datetime.now(tz=timezone.utc).isoformat()
         topic["last_error"] = str(error_message or "扫描失败")[:200]
         topic["new_ids"] = []
-    _save_store(store)
+    save_store(store)
     return {
         "topic": _literature_topic_meta(topic),
         "items": scan["items"] if scan else (topic.get("items") or []),
