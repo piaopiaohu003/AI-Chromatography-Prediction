@@ -284,6 +284,10 @@ function buildConditions(options) {
     mode,
     organic,
     percent_b: percentB,
+    solvent_c: 'none',
+    percent_c: 0.0,
+    solvent_d: 'none',
+    percent_d: 0.0,
     gradient: gradient || DEFAULT_GRADIENT(),
     flow_ml_min: column.flow,
     temperature_c: 30.0,
@@ -324,9 +328,41 @@ function simulationSummary(result) {
     first_tr: visible.length ? minOf(visible.map((p) => p.tr_min)) : null,
     last_tr: visible.length ? maxOf(visible.map((p) => p.tr_min)) : null,
     min_rs: result.metrics.min_resolution,
+    min_k: visible.some((p) => p.k !== null && p.k !== undefined)
+      ? minOf(visible.map((p) => p.k)) : null,
     t0: result.metrics.t0_min,
     pressure: result.metrics.pressure_bar,
   };
+}
+
+function scoreIsocratic(summary, maxRun) {
+  if (summary.first_tr === null) {
+    return -100.0;
+  }
+  let minRs = summary.min_rs;
+  if (minRs === null || minRs === undefined) {
+    minRs = 2.0;
+  }
+  let score = 3.0 * Math.min(minRs, 2.0);
+  score -= 4.0 * summary.missing;
+  if (summary.min_k !== null && summary.min_k !== undefined && summary.min_k < 1.0) {
+    score -= 1.2 * (1.0 - summary.min_k);
+  }
+  if (summary.last_tr !== null) {
+    score -= 0.05 * summary.last_tr;
+  }
+  if (summary.last_tr !== null && summary.last_tr > maxRun - 1.0) {
+    score -= 5.0;
+  }
+  if (summary.first_tr !== null && summary.t0) {
+    if (summary.first_tr < 1.4 * summary.t0) {
+      score -= 0.8;
+    }
+  }
+  if (summary.pressure && summary.pressure > 950) {
+    score -= 1.5;
+  }
+  return score;
 }
 
 function scoreGradient(summary, gradientTime, maxRun) {
@@ -475,17 +511,6 @@ function ruleNormalConditions(compounds, constraints) {
   rationale.push(
     '正相以正己烷为 A、极性溶剂为 B；不使用 pH 和缓冲盐，需控制流动相含水量并充分平衡色谱柱。',
   );
-  const ionizable = compounds
-    .filter((c) => c.pka !== null && c.pka !== undefined)
-    .map((c) => c.name);
-  if (ionizable.length) {
-    risks.push(
-      '以下组分含可电离基团，正相中可能与硅醇基强吸附或拖尾：'
-      + ionizable.join('、')
-      + '。建议选用氨基/二醇柱或加入少量极性添加剂。',
-    );
-  }
-
   result.warnings.push(...risks);
   rationalityMetricPush(rationale, result);
 
@@ -532,12 +557,7 @@ function ruleConditions(compounds, constraints) {
     && p10Max <= 92.0
     && (constraints.mode === 'auto' || constraints.mode === 'isocratic')
   );
-  let useIsocratic = false;
-  if (constraints.mode === 'isocratic') {
-    useIsocratic = isocraticOk;
-  } else if (constraints.mode === 'auto') {
-    useIsocratic = isocraticOk;
-  }
+  const useIsocratic = constraints.mode === 'isocratic' ? true : isocraticOk;
 
   const rationale = [];
   const risks = [];
@@ -549,29 +569,36 @@ function ruleConditions(compounds, constraints) {
   let summary;
 
   if (useIsocratic) {
+    // Search B-phase percentage with the physical model instead of a single midpoint.
+    const grid = new Set();
+    for (let value = 2.0; value <= 95.01; value += 2.0) {
+      grid.add(pyRound(value, 1));
+    }
+    grid.add(pyRound(clampNumber((p10Max + p1Min) / 2.0, 2.0, 95.0), 1));
     let percentB = pyRound(clampNumber((p10Max + p1Min) / 2.0, 2.0, 95.0), 1);
+    let best = null;
+    for (const candidateB of Array.from(grid).sort((a, b) => a - b)) {
+      const trial = buildConditions({
+        mode: 'isocratic', organic, ph, wavelength, column, percentB: candidateB,
+      });
+      const trialResult = simulate(compounds, trial);
+      const trialSummary = simulationSummary(trialResult);
+      const score = scoreIsocratic(trialSummary, constraints.max_run_min);
+      if (best === null || score > best.score) {
+        best = {
+          score, percentB: candidateB, result: trialResult, summary: trialSummary,
+        };
+      }
+    }
+    percentB = best.percentB;
+    result = best.result;
+    summary = best.summary;
     conditions = buildConditions({
       mode: 'isocratic', organic, ph, wavelength, column, percentB,
     });
-    result = simulate(compounds, conditions);
-    summary = simulationSummary(result);
-    // nudge once if the spread is wider than the target window
-    if (summary.min_rs !== null && summary.min_rs < 1.2) {
-      const adjusted = pyRound(clampNumber(percentB + 2.0, 2.0, 95.0), 1);
-      const alt = buildConditions({
-        mode: 'isocratic', organic, ph, wavelength, column, percentB: adjusted,
-      });
-      const altResult = simulate(compounds, alt);
-      const altSummary = simulationSummary(altResult);
-      if ((altSummary.min_rs || 0) > (summary.min_rs || 0)) {
-        conditions = alt;
-        result = altResult;
-        summary = altSummary;
-        percentB = adjusted;
-      }
-    }
     rationale.push(
-      `各组分 log k 窗口允许等度洗脱，取 k≈1–10 的中点，推荐 ${percentB.toFixed(1)}% ${organic} 等度。`,
+      `通过物理模型扫描 B 相比例，选定 ${percentB.toFixed(1)}% ${organic} 等度，`
+      + `预测最小分离度 ${summary.min_rs === null ? '—' : summary.min_rs.toFixed(2)}。`,
     );
     if (constraints.mode === 'isocratic' && !isocraticOk) {
       risks.push('等度无法同时满足所有组分的保留窗口，实际建议改用梯度洗脱。');
@@ -925,10 +952,10 @@ async function aiConditions(compounds, constraints, override) {
     injection_volume_ul: conditions.injection_volume_ul,
   };
 
-  result.warnings.push(...risks);
   if (!result.peaks.every((p) => p.tr_min !== null)) {
     risks.push('AI 条件下仍有组分未在运行时间内洗脱，已保留模拟结果供复核。');
   }
+  result.warnings.push(...risks);
 
   return {
     source: 'llm',
@@ -943,12 +970,33 @@ async function aiConditions(compounds, constraints, override) {
   };
 }
 
+function resultQuality(result) {
+  const peaks = result.peaks || [];
+  if (!peaks.length || peaks.some((p) => p.tr_min === null)) {
+    return -1.0;
+  }
+  if (!peaks.some((p) => p.visible)) {
+    return -1.0;
+  }
+  const value = result.metrics ? result.metrics.min_resolution : null;
+  return value === null || value === undefined ? 2.0 : Number(value);
+}
+
 async function recommend(compounds, constraints, override) {
   const config = aiClient.resolveConfig(override || null);
 
   if (config.configured) {
     try {
-      return await aiConditions(compounds, constraints, override);
+      const aiResult = await aiConditions(compounds, constraints, override);
+      const ruleResult = ruleConditions(compounds, constraints);
+      const aiQuality = resultQuality(aiResult);
+      const ruleQuality = resultQuality(ruleResult);
+      if (aiQuality < 0 || (aiQuality < 1.2 && ruleQuality > aiQuality + 0.25)) {
+        ruleResult.llm_error = '大模型方案经物理模型复核存在未洗脱组分或分离度不足，'
+          + '已自动改用规则专家系统方案。';
+        return ruleResult;
+      }
+      return aiResult;
     } catch (exc) {
       const ruleResult = ruleConditions(compounds, constraints);
       ruleResult.llm_error = `大模型调用失败，已使用规则专家系统：${exc.message || exc}`;

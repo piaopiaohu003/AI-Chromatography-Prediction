@@ -311,9 +311,35 @@ def _simulation_summary(result: Dict) -> Dict:
         "first_tr": min((p["tr_min"] for p in visible), default=None),
         "last_tr": max((p["tr_min"] for p in visible), default=None),
         "min_rs": result["metrics"].get("min_resolution"),
+        "min_k": min(
+            (p.get("k") for p in visible if p.get("k") is not None),
+            default=None,
+        ),
         "t0": result["metrics"].get("t0_min"),
         "pressure": result["metrics"].get("pressure_bar"),
     }
+
+
+def _score_isocratic(summary: Dict, max_run: float) -> float:
+    if summary["first_tr"] is None:
+        return -100.0
+    min_rs = summary["min_rs"]
+    if min_rs is None:
+        min_rs = 2.0
+    score = 3.0 * min(min_rs, 2.0)
+    score -= 4.0 * summary["missing"]
+    if summary.get("min_k") is not None and summary["min_k"] < 1.0:
+        score -= 1.2 * (1.0 - summary["min_k"])
+    if summary["last_tr"] is not None:
+        score -= 0.05 * summary["last_tr"]
+    if summary["last_tr"] is not None and summary["last_tr"] > max_run - 1.0:
+        score -= 5.0
+    if summary["first_tr"] is not None and summary["t0"]:
+        if summary["first_tr"] < 1.4 * summary["t0"]:
+            score -= 0.8
+    if summary["pressure"] and summary["pressure"] > 950:
+        score -= 1.5
+    return score
 
 
 def _score_gradient(summary: Dict, gradient_time: float, max_run: float) -> float:
@@ -443,14 +469,6 @@ def _rule_normal_conditions(
     rationale.append(
         "正相以正己烷为 A、极性溶剂为 B；不使用 pH 和缓冲盐，需控制流动相含水量并充分平衡色谱柱。"
     )
-    ionizable = [c.name for c in compounds if c.pka is not None]
-    if ionizable:
-        risks.append(
-            "以下组分含可电离基团，正相中可能与硅醇基强吸附或拖尾："
-            + "、".join(ionizable)
-            + "。建议选用氨基/二醇柱或加入少量极性添加剂。"
-        )
-
     result["warnings"].extend(risks)
     rationale.append(
         f"模型预测：死时间 {result['metrics']['t0_min']:.2f} min，柱压约 "
@@ -520,10 +538,9 @@ def _rule_conditions(
         and p10_max <= 92.0
         and constraints.mode in ("auto", "isocratic")
     )
-    use_isocratic = False
     if constraints.mode == "isocratic":
-        use_isocratic = isocratic_ok
-    elif constraints.mode == "auto":
+        use_isocratic = True
+    else:
         use_isocratic = isocratic_ok
 
     rationale: List[str] = []
@@ -532,27 +549,30 @@ def _rule_conditions(
     rationale.extend(wavelength_notes)
 
     if use_isocratic:
-        percent_b = round(_clamp((p10_max + p1_min) / 2.0, 2.0, 95.0), 1)
+        # Search B-phase percentage with the physical model instead of a single midpoint.
+        grid = {round(float(x), 1) for x in np.arange(2.0, 95.01, 2.0)}
+        grid.add(round(_clamp((p10_max + p1_min) / 2.0, 2.0, 95.0), 1))
+        best = None
+        for candidate_b in sorted(grid):
+            trial = _build_conditions(
+                compounds, constraints, "isocratic", organic, ph, wavelength, column,
+                percent_b=candidate_b,
+            )
+            trial_result = simulate(compounds, trial)
+            trial_summary = _simulation_summary(trial_result)
+            score = _score_isocratic(trial_summary, constraints.max_run_min)
+            if best is None or score > best[0]:
+                best = (score, candidate_b, trial_result, trial_summary)
+        assert best is not None
+        _, percent_b, result, summary = best
         conditions = _build_conditions(
             compounds, constraints, "isocratic", organic, ph, wavelength, column,
             percent_b=percent_b,
         )
-        result = simulate(compounds, conditions)
-        summary = _simulation_summary(result)
-        # nudge once if the spread is wider than the target window
-        if summary["min_rs"] is not None and summary["min_rs"] < 1.2:
-            adjusted = round(_clamp(percent_b + 2.0, 2.0, 95.0), 1)
-            alt = _build_conditions(
-                compounds, constraints, "isocratic", organic, ph, wavelength, column,
-                percent_b=adjusted,
-            )
-            alt_result = simulate(compounds, alt)
-            alt_summary = _simulation_summary(alt_result)
-            if (alt_summary["min_rs"] or 0) > (summary["min_rs"] or 0):
-                conditions, result, summary = alt, alt_result, alt_summary
-                percent_b = adjusted
+        rs_text = "—" if summary["min_rs"] is None else f"{summary['min_rs']:.2f}"
         rationale.append(
-            f"各组分 log k 窗口允许等度洗脱，取 k≈1–10 的中点，推荐 {percent_b:.1f}% {organic} 等度。"
+            f"通过物理模型扫描 B 相比例，选定 {percent_b:.1f}% {organic} 等度，"
+            f"预测最小分离度 {rs_text}。"
         )
         if constraints.mode == "isocratic" and not isocratic_ok:
             risks.append("等度无法同时满足所有组分的保留窗口，实际建议改用梯度洗脱。")
@@ -845,9 +865,9 @@ def _ai_conditions(
         "injection_volume_ul": conditions.injection_volume_ul,
     }
 
-    result["warnings"].extend(risks)
     if not all(p["tr_min"] is not None for p in result["peaks"]):
         risks.append("AI 条件下仍有组分未在运行时间内洗脱，已保留模拟结果供复核。")
+    result["warnings"].extend(risks)
 
     return {
         "source": "llm",
@@ -868,6 +888,16 @@ def _ai_conditions(
     }
 
 
+def _result_quality(result: Dict) -> float:
+    peaks = result.get("peaks") or []
+    if not peaks or any(p.get("tr_min") is None for p in peaks):
+        return -1.0
+    if not any(p.get("visible") for p in peaks):
+        return -1.0
+    value = result.get("metrics", {}).get("min_resolution")
+    return 2.0 if value is None else float(value)
+
+
 def recommend(
     compounds: List[Compound],
     constraints: RecommendConstraints,
@@ -878,7 +908,19 @@ def recommend(
 
     if config["configured"]:
         try:
-            return _ai_conditions(compounds, constraints, override)
+            ai_result = _ai_conditions(compounds, constraints, override)
+            rule_result = _rule_conditions(compounds, constraints)
+            ai_quality = _result_quality(ai_result)
+            rule_quality = _result_quality(rule_result)
+            if ai_quality < 0 or (
+                ai_quality < 1.2 and rule_quality > ai_quality + 0.25
+            ):
+                rule_result["llm_error"] = (
+                    "大模型方案经物理模型复核存在未洗脱组分或分离度不足，"
+                    "已自动改用规则专家系统方案。"
+                )
+                return rule_result
+            return ai_result
         except Exception as exc:  # noqa: BLE001 - fall back to deterministic engine
             rule_result = _rule_conditions(compounds, constraints)
             rule_result["llm_error"] = f"大模型调用失败，已使用规则专家系统：{exc}"

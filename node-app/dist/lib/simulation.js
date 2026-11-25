@@ -125,10 +125,13 @@ function channelStrength(key, phase) {
 
 function modifierPhi(percentB, percentC, percentD, conditions) {
   const phase = conditions.phase;
+  const pB = Number(percentB) || 0.0;
+  const pC = Number(percentC) || 0.0;
+  const pD = Number(percentD) || 0.0;
   const contributions = [
-    [Math.max(percentB, 0.0) / 100.0, channelStrength(organicKey(conditions), phase)],
-    [Math.max(percentC, 0.0) / 100.0, channelStrength(channelKey(conditions.solvent_c, phase), phase)],
-    [Math.max(percentD, 0.0) / 100.0, channelStrength(channelKey(conditions.solvent_d, phase), phase)],
+    [Math.max(pB, 0.0) / 100.0, channelStrength(organicKey(conditions), phase)],
+    [Math.max(pC, 0.0) / 100.0, channelStrength(channelKey(conditions.solvent_c, phase), phase)],
+    [Math.max(pD, 0.0) / 100.0, channelStrength(channelKey(conditions.solvent_d, phase), phase)],
   ];
   const total = contributions.reduce((sum, [fraction]) => sum + fraction, 0.0);
   const scale = total <= 1.0 ? 1.0 : 1.0 / total;
@@ -488,8 +491,8 @@ function simulate(compounds, conditions) {
   const baseVisc = aqueousViscosity(conditions);
   const cKey = channelKey(conditions.solvent_c, conditions.phase);
   const dKey = channelKey(conditions.solvent_d, conditions.phase);
-  const fracC = cKey ? conditions.percent_c / 100.0 : 0.0;
-  const fracD = dKey ? conditions.percent_d / 100.0 : 0.0;
+  const fracC = cKey ? (Number(conditions.percent_c) || 0.0) / 100.0 : 0.0;
+  const fracD = dKey ? (Number(conditions.percent_d) || 0.0) / 100.0 : 0.0;
   const fracA = Math.max(0.0, 1.0 - meanB - fracC - fracD);
   const mix = [[fracA, baseVisc], [meanB, ORGANIC_PROPS[organicKey(conditions)].visc]];
   if (cKey) {
@@ -591,7 +594,7 @@ function simulate(compounds, conditions) {
   const maxB = conditions.mode === 'gradient'
     ? maxOf(conditions.gradient.map((p) => p.percent_b))
     : conditions.percent_b;
-  if (maxB + conditions.percent_c + conditions.percent_d > 100.5) {
+  if (maxB + (Number(conditions.percent_c) || 0.0) + (Number(conditions.percent_d) || 0.0) > 100.5) {
     warnings.push('B/C/D 相比例合计超过 100%，计算时已按比例归一化，请检查泵程序设置。');
   }
   for (const [slot, value, label] of [
@@ -648,10 +651,10 @@ function simulate(compounds, conditions) {
     aqueous_label: aqueousLabel(conditions),
     solvent_c: conditions.solvent_c,
     solvent_c_label: auxLabel(conditions.solvent_c, conditions.solvent_c_label),
-    percent_c: conditions.percent_c,
+    percent_c: Number(conditions.percent_c) || 0.0,
     solvent_d: conditions.solvent_d,
     solvent_d_label: auxLabel(conditions.solvent_d, conditions.solvent_d_label),
-    percent_d: conditions.percent_d,
+    percent_d: Number(conditions.percent_d) || 0.0,
     mode: conditions.mode,
     phase,
     chemistry: column.chemistry || 'c18',

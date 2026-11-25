@@ -2044,6 +2044,7 @@ function renderAIResult(result) {
 
       <div class="ai-actions">
         <button class="primary-btn" id="btn-apply-ai">应用到模拟台继续优化</button>
+        <button class="ghost-btn" id="btn-regen-ai">重新生成</button>
         <button class="ghost-btn" id="btn-export-ai">导出峰表 CSV</button>
       </div>
     </section>
@@ -2056,11 +2057,15 @@ function renderAIResult(result) {
   charts.ai.setResult(result.result);
 
   $("#btn-apply-ai").addEventListener("click", () => applyAIResult(result));
+  $("#btn-regen-ai").addEventListener("click", () => generateRecommendation());
   $("#btn-export-ai").addEventListener("click", () => exportPeaks(result.result, "ai-method-peaks"));
 }
 
 function applyAIResult(result) {
-  state.conditions = JSON.parse(JSON.stringify(result.conditions));
+  state.conditions = deepMerge(
+    DEFAULT_CONDITIONS(),
+    JSON.parse(JSON.stringify(result.conditions)),
+  );
   if (!state.conditions.column) state.conditions.column = DEFAULT_CONDITIONS().column;
   if (!Array.isArray(state.conditions.gradient) || state.conditions.gradient.length < 2) {
     state.conditions.gradient = DEFAULT_CONDITIONS().gradient;
