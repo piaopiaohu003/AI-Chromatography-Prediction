@@ -27,6 +27,51 @@ const DEFAULT_CONDITIONS = () => ({
   noise_mau: 0.15,
 });
 
+const COLUMN_PRESETS = [
+  {
+    id: "c18-150-46-5",
+    name: "常规 C18",
+    column: { length_mm: 150, inner_diameter_mm: 4.6, particle_um: 5, porosity: 0.65 },
+    flow_ml_min: 1,
+    dwell_volume_ml: 1,
+  },
+  {
+    id: "c18-250-46-5",
+    name: "高分离 C18",
+    column: { length_mm: 250, inner_diameter_mm: 4.6, particle_um: 5, porosity: 0.65 },
+    flow_ml_min: 1,
+    dwell_volume_ml: 1,
+  },
+  {
+    id: "c18-100-46-35",
+    name: "快速 C18",
+    column: { length_mm: 100, inner_diameter_mm: 4.6, particle_um: 3.5, porosity: 0.65 },
+    flow_ml_min: 1,
+    dwell_volume_ml: 0.8,
+  },
+  {
+    id: "c18-150-21-3",
+    name: "窄径 C18",
+    column: { length_mm: 150, inner_diameter_mm: 2.1, particle_um: 3, porosity: 0.65 },
+    flow_ml_min: 0.3,
+    dwell_volume_ml: 0.5,
+  },
+  {
+    id: "c18-100-21-18",
+    name: "UHPLC C18",
+    column: { length_mm: 100, inner_diameter_mm: 2.1, particle_um: 1.8, porosity: 0.65 },
+    flow_ml_min: 0.3,
+    dwell_volume_ml: 0.4,
+  },
+  {
+    id: "c18-50-21-17",
+    name: "超快速 UHPLC",
+    column: { length_mm: 50, inner_diameter_mm: 2.1, particle_um: 1.7, porosity: 0.65 },
+    flow_ml_min: 0.3,
+    dwell_volume_ml: 0.3,
+  },
+];
+
 const DEFAULT_IDS = ["benzoic-acid", "acetaminophen", "caffeine", "ibuprofen"];
 
 const state = {
@@ -332,8 +377,13 @@ function bindSimControls() {
         setPath(state.conditions, path, value);
       }
       persist();
+      if (path.startsWith("column.")) syncColumnSelector();
       scheduleSim();
     });
+  });
+
+  $("#column-preset").addEventListener("change", (event) => {
+    applyColumnPreset(event.target.value);
   });
 
   $("#btn-add-grad").addEventListener("click", () => {
@@ -418,6 +468,8 @@ function syncControls() {
     input.value = value === null || value === undefined ? "" : String(value);
   });
 
+  syncColumnSelector();
+
   const maxRun = $("#max-run");
   maxRun.value = String(state.aiConstraints.max_run_min);
   $("#max-run-out").textContent = `${Math.round(state.aiConstraints.max_run_min)} min`;
@@ -431,6 +483,51 @@ function lightSyncSegment(selector, value) {
   $$(`${selector} button`).forEach((button) => {
     button.classList.toggle("active", button.dataset.value === value);
   });
+}
+
+function matchColumnPreset(column) {
+  const matched = COLUMN_PRESETS.find((preset) =>
+    ["length_mm", "inner_diameter_mm", "particle_um", "porosity"].every(
+      (key) => Math.abs(Number(column[key]) - Number(preset.column[key])) < 1e-6,
+    ));
+  return matched ? matched.id : "custom";
+}
+
+function syncColumnSelector() {
+  const select = $("#column-preset");
+  if (!select) return;
+  const presetId = matchColumnPreset(state.conditions.column);
+  const preset = COLUMN_PRESETS.find((item) => item.id === presetId);
+  const column = state.conditions.column;
+  select.value = presetId;
+  const summary = $("#column-summary");
+  if (summary) {
+    summary.textContent = `${preset ? preset.name : "自定义"} · ${column.length_mm} × ${column.inner_diameter_mm} mm · ${column.particle_um} µm`;
+  }
+}
+
+function applyColumnPreset(presetId) {
+  const select = $("#column-preset");
+  if (!presetId || presetId === "custom") {
+    const details = $(".advanced");
+    if (details) details.open = true;
+    if (select) select.value = "custom";
+    const column = state.conditions.column;
+    const summary = $("#column-summary");
+    if (summary) {
+      summary.textContent = `自定义 · ${column.length_mm} × ${column.inner_diameter_mm} mm · ${column.particle_um} µm`;
+    }
+    return;
+  }
+  const preset = COLUMN_PRESETS.find((item) => item.id === presetId);
+  if (!preset) return;
+  state.conditions.column = { ...state.conditions.column, ...preset.column };
+  state.conditions.flow_ml_min = preset.flow_ml_min;
+  state.conditions.dwell_volume_ml = preset.dwell_volume_ml;
+  syncControls();
+  persist();
+  scheduleSim(0);
+  toast(`已切换为${preset.name}（${preset.column.length_mm} × ${preset.column.inner_diameter_mm} mm，${preset.column.particle_um} µm）`, "ok");
 }
 
 function syncModeVisibility() {

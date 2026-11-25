@@ -403,6 +403,21 @@ input[type="range"]::-moz-range-thumb {
   border-color: var(--teal-dim);
 }
 
+.column-select {
+  width: 100%;
+  background: rgba(8, 14, 19, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 9px;
+  font-size: 11.5px;
+  color: var(--text);
+  cursor: pointer;
+}
+.column-select:focus {
+  outline: none;
+  border-color: var(--teal-dim);
+}
+
 .preset-row { margin-top: 16px; border-top: 1px dashed var(--border-soft); padding-top: 12px; }
 .preset-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
 .chip-btn {
