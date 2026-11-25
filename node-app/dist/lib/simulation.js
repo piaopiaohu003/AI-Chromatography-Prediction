@@ -19,15 +19,62 @@ const {
 const R_GAS = 8.314462618;
 const WATER_VISC = 0.00089; // Pa.s at 25 C
 const ORGANIC_PROPS = {
-  ACN: { visc: 0.00037, dm: 0.060 }, // Dm in mm^2/min
-  MeOH: { visc: 0.00055, dm: 0.052 },
-  IPA: { visc: 0.00240, dm: 0.045 },
-  EtOAc: { visc: 0.00043, dm: 0.070 },
+  ACN: { visc: 0.00037, dm: 0.060, label: '乙腈' }, // Dm in mm^2/min
+  MeOH: { visc: 0.00055, dm: 0.052, label: '甲醇' },
+  IPA: { visc: 0.00240, dm: 0.045, label: '异丙醇' },
+  EtOAc: { visc: 0.00043, dm: 0.070, label: '乙酸乙酯' },
+  THF: { visc: 0.00046, dm: 0.065, label: '四氢呋喃' },
+  EtOH: { visc: 0.00109, dm: 0.050, label: '乙醇' },
+};
+const AQUEOUS_PROPS = {
+  water: { visc: WATER_VISC, label: '水' },
+  buffer: { visc: 0.00095, label: '缓冲水相' },
+  hexane: { visc: 0.00030, label: '正己烷' },
+  heptane: { visc: 0.00039, label: '正庚烷' },
+  cyclohexane: { visc: 0.00098, label: '环己烷' },
 };
 const PHASE_PROPS = {
   reversed: { base_visc: WATER_VISC },
   normal: { base_visc: 0.00030 }, // n-hexane at 25 C
 };
+const HEXANE_FAMILY = ['hexane', 'heptane', 'cyclohexane'];
+const AQUEOUS_FAMILY = ['water', 'buffer'];
+
+function organicKey(conditions) {
+  if (conditions.organic === 'custom') {
+    return conditions.phase === 'normal' ? 'IPA' : 'ACN';
+  }
+  return conditions.organic;
+}
+
+function organicLabel(conditions) {
+  if (conditions.organic === 'custom' && conditions.organic_label) {
+    return String(conditions.organic_label).trim();
+  }
+  return ORGANIC_PROPS[organicKey(conditions)].label;
+}
+
+function aqueousKey(conditions) {
+  if (conditions.aqueous === 'auto' || conditions.aqueous === undefined) {
+    return conditions.phase === 'normal' ? 'hexane' : 'water';
+  }
+  return conditions.aqueous;
+}
+
+function aqueousLabel(conditions) {
+  if (conditions.aqueous === 'custom') {
+    return conditions.aqueous_label ? String(conditions.aqueous_label).trim() : '自定义非有机相';
+  }
+  return AQUEOUS_PROPS[aqueousKey(conditions)].label;
+}
+
+function aqueousViscosity(conditions) {
+  const key = aqueousKey(conditions);
+  if (key === 'custom') {
+    return PHASE_PROPS[conditions.phase].base_visc;
+  }
+  return AQUEOUS_PROPS[key].visc;
+}
 const NP_REF_PHI = 0.10; // normal-phase reference: 10% polar modifier
 const RESPONSE_SCALE = 6.0; // mAU*min per ug of injected mass at full absorptivity
 const TAIL_RATIO = 0.18;
@@ -150,7 +197,7 @@ function simulate(compounds, conditions) {
   const t0 = voidVolumeMl / flow;
   const u = flow * 1000.0 / (column.porosity * areaMm2); // mm/min
   const dpMm = column.particle_um / 1000.0;
-  const dm = ORGANIC_PROPS[conditions.organic].dm;
+  const dm = ORGANIC_PROPS[organicKey(conditions)].dm;
   const reducedVelocity = Math.max(u * dpMm / dm, 1e-3);
   const plateHeightMm = dpMm * (1.75 + 1.25 / reducedVelocity + 0.06 * reducedVelocity);
   const plates = Math.max(250.0, column.length_mm / plateHeightMm);
@@ -170,7 +217,7 @@ function simulate(compounds, conditions) {
         + sArr[i] * NP_REF_PHI
         + Math.log10(Math.max(tempArr[i], 1e-9));
     } else {
-      sArr[i] = sValue(c, conditions.organic);
+      sArr[i] = sValue(c, organicKey(conditions));
       const neutral = neutralFraction(c, conditions.ph);
       // Combined intercept: log k at phi = 0 for the actual pH / temperature.
       logK0[i] = logKw(c)
@@ -376,8 +423,8 @@ function simulate(compounds, conditions) {
 
   // --- pressure & warnings ---------------------------------------------
   const meanPhi = mean(composition) / 100.0;
-  const baseVisc = PHASE_PROPS[phase].base_visc;
-  let eta = baseVisc + meanPhi * (ORGANIC_PROPS[conditions.organic].visc - baseVisc);
+  const baseVisc = aqueousViscosity(conditions);
+  let eta = baseVisc + meanPhi * (ORGANIC_PROPS[organicKey(conditions)].visc - baseVisc);
   eta *= Math.max(0.4, 1.0 - 0.021 * (conditions.temperature_c - 25.0));
   const pressureBar = 1600.0 * eta * column.length_mm * (u / 60.0) / Math.pow(dpMm, 2) / 1e5;
 
@@ -433,6 +480,9 @@ function simulate(compounds, conditions) {
         `反相模型按 C18 校准，当前固定相为 ${String(column.chemistry).toUpperCase()}，保留预测仅作相对参考。`,
       );
     }
+    if (HEXANE_FAMILY.includes(aqueousKey(conditions))) {
+      warnings.push('当前为反相模式，非有机相 A 通常应为水或缓冲水溶液；所选 A 相极性过低。');
+    }
   } else {
     if (column.chemistry && !['silica', 'diol', 'amino'].includes(column.chemistry)) {
       warnings.push('正相模式建议使用硅胶、二醇或氨基柱；当前 C18 固定相不适合正相条件。');
@@ -447,6 +497,21 @@ function simulate(compounds, conditions) {
         + '。建议使用氨基/二醇柱或加入少量极性添加剂。',
       );
     }
+    if (AQUEOUS_FAMILY.includes(aqueousKey(conditions))) {
+      warnings.push('当前为正相模式，非有机相 A 通常应为正己烷或正庚烷；所选 A 相为水相，可能不兼容。');
+    }
+  }
+  if (conditions.aqueous === 'custom') {
+    warnings.push(
+      `自定义非有机相「${aqueousLabel(conditions)}」按`
+      + (phase === 'normal' ? '正己烷' : '水') + '的黏度估算柱压。',
+    );
+  }
+  if (conditions.organic === 'custom') {
+    warnings.push(
+      `自定义有机相「${organicLabel(conditions)}」按`
+      + (phase === 'normal' ? '异丙醇' : '乙腈') + '的物性与洗脱强度估算。',
+    );
   }
   const pressureLimit = column.particle_um <= 2.5 ? 1000.0 : 400.0;
   if (pressureBar > pressureLimit) {
@@ -476,6 +541,9 @@ function simulate(compounds, conditions) {
     max_k: finiteIdx.length ? pyRound(maxOf(finiteIdx.map((i) => kElution[i])), 2) : null,
     wavelength_nm: conditions.wavelength_nm,
     organic: conditions.organic,
+    organic_label: organicLabel(conditions),
+    aqueous: conditions.aqueous,
+    aqueous_label: aqueousLabel(conditions),
     mode: conditions.mode,
     phase,
     chemistry: column.chemistry || 'c18',

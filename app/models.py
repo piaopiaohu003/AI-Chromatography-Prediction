@@ -23,7 +23,14 @@ class GradientPoint(BaseModel):
 class Conditions(BaseModel):
     phase: Literal["reversed", "normal"] = "reversed"
     mode: Literal["isocratic", "gradient"] = "gradient"
-    organic: Literal["ACN", "MeOH", "IPA", "EtOAc"] = "ACN"
+    organic: Literal[
+        "ACN", "MeOH", "IPA", "EtOAc", "THF", "EtOH", "custom"
+    ] = "ACN"
+    organic_label: Optional[str] = Field(None, max_length=40)
+    aqueous: Literal[
+        "auto", "water", "buffer", "hexane", "heptane", "cyclohexane", "custom"
+    ] = "auto"
+    aqueous_label: Optional[str] = Field(None, max_length=40)
     percent_b: float = Field(50.0, ge=0.0, le=100.0)
     gradient: List[GradientPoint] = Field(
         default_factory=lambda: [

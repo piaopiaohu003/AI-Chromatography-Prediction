@@ -973,6 +973,31 @@ input[type="range"]::-moz-range-thumb {
   .app { padding: 0 16px 32px; }
   .chart-wrap { height: 320px; }
 }
+/* ---------------- custom solvents ---------------- */
+.custom-solvent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.custom-solvent input {
+  width: 100%;
+  padding: 8px 10px;
+  background: rgba(8, 14, 19, 0.72);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+.custom-solvent input:focus {
+  outline: none;
+  border-color: var(--teal-dim);
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.08);
+}
+.custom-solvent.hidden { display: none; }
+
 /* ---------------- auth ---------------- */
 .auth-gate {
   position: fixed;

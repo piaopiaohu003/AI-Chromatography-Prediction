@@ -11,6 +11,9 @@ const DEFAULT_CONDITIONS = () => ({
   phase: "reversed",
   mode: "gradient",
   organic: "ACN",
+  organic_label: null,
+  aqueous: "auto",
+  aqueous_label: null,
   percent_b: 50,
   gradient: [
     { time_min: 0, percent_b: 5 },
@@ -655,8 +658,37 @@ function bindSimControls() {
     if (!button) return;
     state.conditions.organic = button.dataset.value;
     syncSegment("#seg-organic", state.conditions.organic);
+    syncSolventCustomFields();
+    if (state.conditions.organic === "custom") {
+      setTimeout(() => $("#organic-custom").focus(), 0);
+    }
     persist();
     scheduleSim();
+  });
+
+  $("#seg-aqueous").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-value]");
+    if (!button) return;
+    state.conditions.aqueous = button.dataset.value;
+    syncSegment("#seg-aqueous", state.conditions.aqueous);
+    syncSolventCustomFields();
+    if (state.conditions.aqueous === "custom") {
+      setTimeout(() => $("#aqueous-custom").focus(), 0);
+    }
+    persist();
+    scheduleSim();
+  });
+
+  $("#organic-custom").addEventListener("input", (event) => {
+    state.conditions.organic_label = event.target.value;
+    persist();
+    scheduleSim(350);
+  });
+
+  $("#aqueous-custom").addEventListener("input", (event) => {
+    state.conditions.aqueous_label = event.target.value;
+    persist();
+    scheduleSim(350);
   });
 
   $("#iso-slider").addEventListener("input", (event) => {
@@ -803,23 +835,87 @@ const ORGANIC_OPTIONS = {
   reversed: [
     { value: "ACN", label: "乙腈 ACN" },
     { value: "MeOH", label: "甲醇 MeOH" },
+    { value: "THF", label: "四氢呋喃 THF" },
+    { value: "EtOH", label: "乙醇 EtOH" },
+    { value: "custom", label: "自定义" },
   ],
   normal: [
     { value: "IPA", label: "异丙醇 IPA" },
     { value: "EtOAc", label: "乙酸乙酯 EtOAc" },
+    { value: "THF", label: "四氢呋喃 THF" },
+    { value: "EtOH", label: "乙醇 EtOH" },
+    { value: "custom", label: "自定义" },
   ],
 };
+
+const AQUEOUS_OPTIONS = {
+  reversed: [
+    { value: "water", label: "水" },
+    { value: "buffer", label: "缓冲水相" },
+    { value: "custom", label: "自定义" },
+  ],
+  normal: [
+    { value: "hexane", label: "正己烷" },
+    { value: "heptane", label: "正庚烷" },
+    { value: "cyclohexane", label: "环己烷" },
+    { value: "custom", label: "自定义" },
+  ],
+};
+
+const ORGANIC_NAMES = {
+  ACN: "乙腈", MeOH: "甲醇", IPA: "异丙醇", EtOAc: "乙酸乙酯",
+  THF: "四氢呋喃", EtOH: "乙醇",
+};
+const AQUEOUS_NAMES = {
+  water: "水", buffer: "缓冲水相", hexane: "正己烷", heptane: "正庚烷",
+  cyclohexane: "环己烷",
+};
+
+function solventLabel(value, customLabel, names, fallback) {
+  if (value === "custom") return (customLabel || "").trim() || fallback;
+  if (value === "auto") return fallback || "自动";
+  return names[value] || value;
+}
 
 function renderOrganicOptions() {
   const phase = state.conditions.phase || "reversed";
   const options = ORGANIC_OPTIONS[phase];
   if (!options.some((item) => item.value === state.conditions.organic)) {
-    state.conditions.organic = options[0].value;
+    state.conditions.organic = phase === "normal" ? "IPA" : "ACN";
   }
   $("#seg-organic").innerHTML = options
     .map((item) => `<button data-value="${item.value}">${item.label}</button>`)
     .join("");
   syncSegment("#seg-organic", state.conditions.organic);
+}
+
+function renderAqueousOptions() {
+  const phase = state.conditions.phase || "reversed";
+  const options = AQUEOUS_OPTIONS[phase];
+  if (!options.some((item) => item.value === state.conditions.aqueous)) {
+    state.conditions.aqueous = phase === "normal" ? "hexane" : "water";
+  }
+  $("#seg-aqueous").innerHTML = options
+    .map((item) => `<button data-value="${item.value}">${item.label}</button>`)
+    .join("");
+  syncSegment("#seg-aqueous", state.conditions.aqueous);
+}
+
+function syncSolventCustomFields() {
+  const organicCustom = state.conditions.organic === "custom";
+  const aqueousCustom = state.conditions.aqueous === "custom";
+  $("#organic-custom-field").classList.toggle("hidden", !organicCustom);
+  $("#organic-custom-hint").classList.toggle("hidden", !organicCustom);
+  $("#aqueous-custom-field").classList.toggle("hidden", !aqueousCustom);
+  $("#aqueous-custom-hint").classList.toggle("hidden", !aqueousCustom);
+  const organicInput = $("#organic-custom");
+  if (organicCustom && document.activeElement !== organicInput) {
+    organicInput.value = state.conditions.organic_label || "";
+  }
+  const aqueousInput = $("#aqueous-custom");
+  if (aqueousCustom && document.activeElement !== aqueousInput) {
+    aqueousInput.value = state.conditions.aqueous_label || "";
+  }
 }
 
 function renderAiOrganicOptions() {
@@ -853,7 +949,8 @@ function syncPhaseUI() {
   lightSyncSegment("#seg-ai-phase", state.aiConstraints.phase);
   $("#phase-note").classList.toggle("hidden", !normal);
   $("#ph-field").classList.toggle("hidden", normal);
-  $("#organic-label").textContent = normal ? "极性调节剂 B" : "有机相";
+  $("#aqueous-label").textContent = normal ? "非极性相 A" : "水相 A";
+  $("#organic-label").textContent = normal ? "极性调节剂 B" : "有机相 B";
   $("#iso-label").textContent = normal ? "极性调节剂比例 B" : "有机相比例 B";
   $("#grad-hint").textContent = normal
     ? "时间从 0 min 起，%B 为极性调节剂体积分数"
@@ -863,7 +960,9 @@ function syncPhaseUI() {
     : "切换预设会同时应用推荐流速与系统延迟体积";
   const isoPreset = $('[data-preset="iso50"]');
   if (isoPreset) isoPreset.textContent = normal ? "等度 10%" : "等度 50%";
+  renderAqueousOptions();
   renderOrganicOptions();
+  syncSolventCustomFields();
   renderAiOrganicOptions();
   renderColumnOptions();
   syncColumnSelector();
@@ -873,12 +972,11 @@ function setPhase(phase) {
   if (!["reversed", "normal"].includes(phase) || state.conditions.phase === phase) return;
   state.conditions.phase = phase;
   const normal = phase === "normal";
-  if (normal && !["IPA", "EtOAc"].includes(state.conditions.organic)) {
-    state.conditions.organic = "IPA";
+  const organicValues = ORGANIC_OPTIONS[phase].map((item) => item.value);
+  if (!organicValues.includes(state.conditions.organic)) {
+    state.conditions.organic = normal ? "IPA" : "ACN";
   }
-  if (!normal && !["ACN", "MeOH"].includes(state.conditions.organic)) {
-    state.conditions.organic = "ACN";
-  }
+  state.conditions.aqueous = normal ? "hexane" : "water";
   const allowed = normal ? ["silica", "diol", "amino"] : ["c18"];
   if (!allowed.includes(state.conditions.column.chemistry)) {
     state.conditions.column.chemistry = normal ? "silica" : "c18";
@@ -1186,10 +1284,26 @@ async function runSimulation() {
     renderMetrics(result);
     $("#peak-count").textContent = String(result.peaks.length);
     const gradient = state.conditions.mode === "gradient";
+    const normal = state.conditions.phase === "normal";
+    const aqueousLabel = solventLabel(
+      state.conditions.aqueous,
+      state.conditions.aqueous_label,
+      AQUEOUS_NAMES,
+      normal ? "正己烷" : "水",
+    );
+    const organicLabel = solventLabel(
+      state.conditions.organic,
+      state.conditions.organic_label,
+      ORGANIC_NAMES,
+      normal ? "异丙醇" : "乙腈",
+    );
+    const mobileNote = normal
+      ? `${aqueousLabel}/${organicLabel}`
+      : `${aqueousLabel}/${organicLabel} · pH ${Number(state.conditions.ph).toFixed(1)}`;
     $("#chart-sub").textContent =
       `${result.peaks.length} 个组分 · ${gradient ? "梯度" : "等度"} · `
-      + `${state.conditions.organic} · λ ${Math.round(state.conditions.wavelength_nm)} nm · `
-      + `pH ${Number(state.conditions.ph).toFixed(1)} · 运行 ${fmt(result.metrics.run_time_min, 1)} min`;
+      + `${mobileNote} · λ ${Math.round(state.conditions.wavelength_nm)} nm · `
+      + `运行 ${fmt(result.metrics.run_time_min, 1)} min`;
   } catch (err) {
     if (err.name === "AbortError") return;
     $("#chart-sub").textContent = "计算失败，请检查输入参数";

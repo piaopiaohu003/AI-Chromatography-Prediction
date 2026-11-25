@@ -134,6 +134,16 @@ function normalizeGradient(raw, path) {
   });
 }
 
+function parseOptionalLabel(value, path) {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  if (text.length > 40) {
+    throw new ValidationError(`${path} 长度不能超过 40`);
+  }
+  return text;
+}
+
 function normalizeConditions(raw, path = 'conditions') {
   if (!isPlainObject(raw)) {
     throw new ValidationError(`${path} 为必填对象`);
@@ -146,7 +156,20 @@ function normalizeConditions(raw, path = 'conditions') {
   return {
     phase: parseLiteral(raw.phase, `${path}.phase`, ['reversed', 'normal'], 'reversed'),
     mode: parseLiteral(raw.mode, `${path}.mode`, ['isocratic', 'gradient'], 'gradient'),
-    organic: parseLiteral(raw.organic, `${path}.organic`, ['ACN', 'MeOH', 'IPA', 'EtOAc'], 'ACN'),
+    organic: parseLiteral(
+      raw.organic,
+      `${path}.organic`,
+      ['ACN', 'MeOH', 'IPA', 'EtOAc', 'THF', 'EtOH', 'custom'],
+      'ACN',
+    ),
+    organic_label: parseOptionalLabel(raw.organic_label, `${path}.organic_label`),
+    aqueous: parseLiteral(
+      raw.aqueous,
+      `${path}.aqueous`,
+      ['auto', 'water', 'buffer', 'hexane', 'heptane', 'cyclohexane', 'custom'],
+      'auto',
+    ),
+    aqueous_label: parseOptionalLabel(raw.aqueous_label, `${path}.aqueous_label`),
     percent_b: parseNumber(raw.percent_b, `${path}.percent_b`, { defaultValue: 50.0, min: 0.0, max: 100.0 }),
     gradient: normalizeGradient(raw.gradient, `${path}.gradient`),
     flow_ml_min: parseNumber(raw.flow_ml_min, `${path}.flow_ml_min`, { defaultValue: 1.0, min: 0.05, max: 5.0 }),

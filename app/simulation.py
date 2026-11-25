@@ -40,11 +40,57 @@ ORGANIC_PROPS = {
     "MeOH": {"visc": 0.00055, "dm": 0.052, "label": "甲醇"},
     "IPA": {"visc": 0.00240, "dm": 0.045, "label": "异丙醇"},
     "EtOAc": {"visc": 0.00043, "dm": 0.070, "label": "乙酸乙酯"},
+    "THF": {"visc": 0.00046, "dm": 0.065, "label": "四氢呋喃"},
+    "EtOH": {"visc": 0.00109, "dm": 0.050, "label": "乙醇"},
+}
+AQUEOUS_PROPS = {
+    "water": {"visc": WATER_VISC, "label": "水"},
+    "buffer": {"visc": 0.00095, "label": "缓冲水相"},
+    "hexane": {"visc": 0.00030, "label": "正己烷"},
+    "heptane": {"visc": 0.00039, "label": "正庚烷"},
+    "cyclohexane": {"visc": 0.00098, "label": "环己烷"},
 }
 PHASE_PROPS = {
     "reversed": {"base_visc": WATER_VISC},
     "normal": {"base_visc": 0.00030},  # n-hexane at 25 C
 }
+HEXANE_FAMILY = ("hexane", "heptane", "cyclohexane")
+AQUEOUS_FAMILY = ("water", "buffer")
+
+
+def _organic_key(conditions: Conditions) -> str:
+    """Physical-property key for the organic modifier."""
+    if conditions.organic == "custom":
+        return "IPA" if conditions.phase == "normal" else "ACN"
+    return conditions.organic
+
+
+def _organic_label(conditions: Conditions) -> str:
+    if conditions.organic == "custom" and conditions.organic_label:
+        return conditions.organic_label.strip()
+    return ORGANIC_PROPS[_organic_key(conditions)]["label"]
+
+
+def _aqueous_key(conditions: Conditions) -> str:
+    """Resolved non-organic phase key; auto follows the chromatographic mode."""
+    if conditions.aqueous == "auto":
+        return "hexane" if conditions.phase == "normal" else "water"
+    return conditions.aqueous
+
+
+def _aqueous_label(conditions: Conditions) -> str:
+    if conditions.aqueous == "custom" and conditions.aqueous_label:
+        return conditions.aqueous_label.strip()
+    if conditions.aqueous == "custom":
+        return "自定义非有机相"
+    return AQUEOUS_PROPS[_aqueous_key(conditions)]["label"]
+
+
+def _aqueous_viscosity(conditions: Conditions) -> float:
+    key = _aqueous_key(conditions)
+    if key == "custom":
+        return PHASE_PROPS[conditions.phase]["base_visc"]
+    return AQUEOUS_PROPS[key]["visc"]
 NP_REF_PHI = 0.10  # normal-phase reference: 10% polar modifier
 RESPONSE_SCALE = 6.0  # mAU*min per ug of injected mass at full absorptivity
 TAIL_RATIO = 0.18
@@ -152,7 +198,8 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
     t0 = void_volume_ml / flow
     u = flow * 1000.0 / (column.porosity * area_mm2)  # mm/min
     dp_mm = column.particle_um / 1000.0
-    dm = ORGANIC_PROPS[conditions.organic]["dm"]
+    organic_key = _organic_key(conditions)
+    dm = ORGANIC_PROPS[organic_key]["dm"]
     reduced_velocity = max(u * dp_mm / dm, 1e-3)
     plate_height_mm = dp_mm * (1.75 + 1.25 / reduced_velocity + 0.06 * reduced_velocity)
     plates = max(250.0, column.length_mm / plate_height_mm)
@@ -175,7 +222,7 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
         )
     else:
         log_kw = np.array([_log_kw(c) for c in compounds])
-        s_values = np.array([_s_value(c, conditions.organic) for c in compounds])
+        s_values = np.array([_s_value(c, organic_key) for c in compounds])
         neutral = np.array([_neutral_fraction(c, conditions.ph) for c in compounds])
         # Combined intercept: log k at phi = 0 for the actual pH / temperature.
         log_k0 = (
@@ -332,8 +379,8 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
 
     # --- pressure & warnings ---------------------------------------------
     mean_phi = float(np.mean(composition)) / 100.0
-    base_visc = PHASE_PROPS[phase]["base_visc"]
-    eta = base_visc + mean_phi * (ORGANIC_PROPS[conditions.organic]["visc"] - base_visc)
+    base_visc = _aqueous_viscosity(conditions)
+    eta = base_visc + mean_phi * (ORGANIC_PROPS[organic_key]["visc"] - base_visc)
     eta *= max(0.4, 1.0 - 0.021 * (conditions.temperature_c - 25.0))
     pressure_bar = 1600.0 * eta * column.length_mm * (u / 60.0) / (dp_mm ** 2) / 1e5
 
@@ -375,6 +422,10 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
             warnings.append(
                 f"反相模型按 C18 校准，当前固定相为 {column.chemistry.upper()}，保留预测仅作相对参考。"
             )
+        if _aqueous_key(conditions) in HEXANE_FAMILY:
+            warnings.append(
+                "当前为反相模式，非有机相 A 通常应为水或缓冲水溶液；所选 A 相极性过低。"
+            )
     else:
         if column.chemistry not in ("silica", "diol", "amino"):
             warnings.append(
@@ -387,6 +438,22 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
                 + "、".join(ionizable)
                 + "。建议使用氨基/二醇柱或加入少量极性添加剂。"
             )
+        if _aqueous_key(conditions) in AQUEOUS_FAMILY:
+            warnings.append(
+                "当前为正相模式，非有机相 A 通常应为正己烷或正庚烷；所选 A 相为水相，可能不兼容。"
+            )
+    if conditions.aqueous == "custom":
+        warnings.append(
+            f"自定义非有机相「{_aqueous_label(conditions)}」按"
+            + ("正己烷" if phase == "normal" else "水")
+            + "的黏度估算柱压。"
+        )
+    if conditions.organic == "custom":
+        warnings.append(
+            f"自定义有机相「{_organic_label(conditions)}」按"
+            + ("异丙醇" if phase == "normal" else "乙腈")
+            + "的物性与洗脱强度估算。"
+        )
     pressure_limit = 1000.0 if column.particle_um <= 2.5 else 400.0
     if pressure_bar > pressure_limit:
         warnings.append(
@@ -410,6 +477,9 @@ def simulate(compounds: List[Compound], conditions: Conditions) -> Dict:
         "max_k": round(float(np.nanmax(k_elution[finite])), 2) if np.any(finite) else None,
         "wavelength_nm": float(conditions.wavelength_nm),
         "organic": conditions.organic,
+        "organic_label": _organic_label(conditions),
+        "aqueous": conditions.aqueous,
+        "aqueous_label": _aqueous_label(conditions),
         "mode": conditions.mode,
         "phase": phase,
         "chemistry": column.chemistry,
