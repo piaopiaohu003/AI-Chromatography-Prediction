@@ -29,29 +29,73 @@ const DEFAULT_CONDITIONS = () => ({
 
 const COLUMN_PRESETS = [
   {
-    id: "c18-150-46-5",
-    name: "常规 C18",
-    column: { length_mm: 150, inner_diameter_mm: 4.6, particle_um: 5, porosity: 0.65 },
-    flow_ml_min: 1,
-    dwell_volume_ml: 1,
-  },
-  {
     id: "c18-250-46-5",
     name: "高分离 C18",
+    group: "常规分析柱",
     column: { length_mm: 250, inner_diameter_mm: 4.6, particle_um: 5, porosity: 0.65 },
     flow_ml_min: 1,
     dwell_volume_ml: 1,
   },
   {
-    id: "c18-100-46-35",
+    id: "c18-150-46-5",
+    name: "常规 C18",
+    group: "常规分析柱",
+    column: { length_mm: 150, inner_diameter_mm: 4.6, particle_um: 5, porosity: 0.65 },
+    flow_ml_min: 1,
+    dwell_volume_ml: 1,
+  },
+  {
+    id: "c18-150-46-35",
+    name: "中效 C18",
+    group: "常规分析柱",
+    column: { length_mm: 150, inner_diameter_mm: 4.6, particle_um: 3.5, porosity: 0.65 },
+    flow_ml_min: 1,
+    dwell_volume_ml: 0.9,
+  },
+  {
+    id: "c18-100-46-5",
     name: "快速 C18",
+    group: "常规分析柱",
+    column: { length_mm: 100, inner_diameter_mm: 4.6, particle_um: 5, porosity: 0.65 },
+    flow_ml_min: 1,
+    dwell_volume_ml: 0.8,
+  },
+  {
+    id: "c18-100-46-35",
+    name: "快速高效 C18",
+    group: "常规分析柱",
     column: { length_mm: 100, inner_diameter_mm: 4.6, particle_um: 3.5, porosity: 0.65 },
     flow_ml_min: 1,
     dwell_volume_ml: 0.8,
   },
   {
+    id: "c18-50-46-5",
+    name: "超快速 C18",
+    group: "常规分析柱",
+    column: { length_mm: 50, inner_diameter_mm: 4.6, particle_um: 5, porosity: 0.65 },
+    flow_ml_min: 1,
+    dwell_volume_ml: 0.7,
+  },
+  {
+    id: "c18-150-30-3",
+    name: "窄径 C18",
+    group: "窄径柱",
+    column: { length_mm: 150, inner_diameter_mm: 3, particle_um: 3, porosity: 0.65 },
+    flow_ml_min: 0.5,
+    dwell_volume_ml: 0.5,
+  },
+  {
+    id: "c18-100-30-27",
+    name: "快速窄径 C18",
+    group: "窄径柱",
+    column: { length_mm: 100, inner_diameter_mm: 3, particle_um: 2.7, porosity: 0.65 },
+    flow_ml_min: 0.5,
+    dwell_volume_ml: 0.4,
+  },
+  {
     id: "c18-150-21-3",
     name: "窄径 C18",
+    group: "窄径柱",
     column: { length_mm: 150, inner_diameter_mm: 2.1, particle_um: 3, porosity: 0.65 },
     flow_ml_min: 0.3,
     dwell_volume_ml: 0.5,
@@ -59,6 +103,7 @@ const COLUMN_PRESETS = [
   {
     id: "c18-100-21-18",
     name: "UHPLC C18",
+    group: "UHPLC 柱",
     column: { length_mm: 100, inner_diameter_mm: 2.1, particle_um: 1.8, porosity: 0.65 },
     flow_ml_min: 0.3,
     dwell_volume_ml: 0.4,
@@ -66,8 +111,33 @@ const COLUMN_PRESETS = [
   {
     id: "c18-50-21-17",
     name: "超快速 UHPLC",
+    group: "UHPLC 柱",
     column: { length_mm: 50, inner_diameter_mm: 2.1, particle_um: 1.7, porosity: 0.65 },
     flow_ml_min: 0.3,
+    dwell_volume_ml: 0.3,
+  },
+  {
+    id: "c18-30-21-18",
+    name: "极速 UHPLC",
+    group: "UHPLC 柱",
+    column: { length_mm: 30, inner_diameter_mm: 2.1, particle_um: 1.8, porosity: 0.65 },
+    flow_ml_min: 0.4,
+    dwell_volume_ml: 0.2,
+  },
+  {
+    id: "c18-100-10-17",
+    name: "微径 UHPLC",
+    group: "微径柱",
+    column: { length_mm: 100, inner_diameter_mm: 1, particle_um: 1.7, porosity: 0.65 },
+    flow_ml_min: 0.08,
+    dwell_volume_ml: 0.2,
+  },
+  {
+    id: "c18-150-10-3",
+    name: "微径 C18",
+    group: "微径柱",
+    column: { length_mm: 150, inner_diameter_mm: 1, particle_um: 3, porosity: 0.65 },
+    flow_ml_min: 0.05,
     dwell_volume_ml: 0.3,
   },
 ];
@@ -310,6 +380,7 @@ const OUTPUT_MAP = {
 };
 
 function bindSimControls() {
+  renderColumnOptions();
   $("#compound-list").addEventListener("input", (event) => {
     const input = event.target.closest("[data-conc]");
     if (!input) return;
@@ -483,6 +554,23 @@ function lightSyncSegment(selector, value) {
   $$(`${selector} button`).forEach((button) => {
     button.classList.toggle("active", button.dataset.value === value);
   });
+}
+
+function renderColumnOptions() {
+  const select = $("#column-preset");
+  if (!select) return;
+  const groups = new Map();
+  COLUMN_PRESETS.forEach((preset) => {
+    if (!groups.has(preset.group)) groups.set(preset.group, []);
+    groups.get(preset.group).push(preset);
+  });
+  const options = Array.from(groups.entries()).map(([group, presets]) => {
+    const items = presets.map((preset) =>
+      `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.name)} · ${preset.column.length_mm} × ${preset.column.inner_diameter_mm} mm, ${preset.column.particle_um} µm</option>`
+    ).join("");
+    return `<optgroup label="${escapeHtml(group)}">${items}</optgroup>`;
+  }).join("");
+  select.innerHTML = `${options}<option value="custom">自定义尺寸</option>`;
 }
 
 function matchColumnPreset(column) {
