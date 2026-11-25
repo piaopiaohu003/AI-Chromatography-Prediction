@@ -590,8 +590,9 @@ function simulate(compounds, conditions) {
       warnings.push('当前为反相模式，非有机相 A 通常应为水或缓冲水溶液；所选 A 相极性过低。');
     }
   } else {
-    if (column.chemistry && !['silica', 'diol', 'amino'].includes(column.chemistry)) {
-      warnings.push('正相模式建议使用硅胶、二醇或氨基柱；当前 C18 固定相不适合正相条件。');
+    const normalChemistry = ['silica', 'diol', 'amino'];
+    if (column.chemistry && !normalChemistry.includes(column.chemistry)) {
+      warnings.push('正相模式建议使用硅胶、二醇或氨基柱；当前固定相与正相条件不匹配。');
     }
     const ionizable = compounds
       .filter((c) => c.pka !== null && c.pka !== undefined)

@@ -1,0 +1,21 @@
+{
+  "name": "workspace",
+  "version": "1.0.0",
+  "description": "反相（RPLC）与正相（NPLC）高效液相色谱通用的**正演模拟**与**AI 条件设计**系统：",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/piaopiaohu003/AI-Chromatography-Prediction.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/piaopiaohu003/AI-Chromatography-Prediction/issues"
+  },
+  "homepage": "https://github.com/piaopiaohu003/AI-Chromatography-Prediction#readme"
+}

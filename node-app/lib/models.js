@@ -111,7 +111,7 @@ function normalizeColumn(raw, path) {
     inner_diameter_mm: parseNumber(raw.inner_diameter_mm, `${path}.inner_diameter_mm`, { defaultValue: 4.6, min: 1.0, max: 10.0 }),
     particle_um: parseNumber(raw.particle_um, `${path}.particle_um`, { defaultValue: 5.0, min: 1.2, max: 10.0 }),
     porosity: parseNumber(raw.porosity, `${path}.porosity`, { defaultValue: 0.65, min: 0.45, max: 0.85 }),
-    chemistry: parseLiteral(raw.chemistry, `${path}.chemistry`, ['c18', 'silica', 'diol', 'amino'], 'c18'),
+    chemistry: parseLiteral(raw.chemistry, `${path}.chemistry`, ['c18', 'c8', 'c4', 'phenyl', 'cyano', 'hilic', 'amide', 'silica', 'diol', 'amino'], 'c18'),
   };
 }
 

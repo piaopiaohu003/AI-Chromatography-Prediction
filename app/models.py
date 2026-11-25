@@ -12,7 +12,10 @@ class ColumnConfig(BaseModel):
     inner_diameter_mm: float = Field(4.6, ge=1.0, le=10.0)
     particle_um: float = Field(5.0, ge=1.2, le=10.0)
     porosity: float = Field(0.65, ge=0.45, le=0.85)
-    chemistry: Literal["c18", "silica", "diol", "amino"] = "c18"
+    chemistry: Literal[
+        "c18", "c8", "c4", "phenyl", "cyano", "hilic", "amide",
+        "silica", "diol", "amino",
+    ] = "c18"
 
 
 class GradientPoint(BaseModel):

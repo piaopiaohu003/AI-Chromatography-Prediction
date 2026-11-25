@@ -225,8 +225,26 @@ const COLUMN_PRESETS = [
 ];
 
 const COLUMN_CHEMISTRY_LABELS = {
-  c18: "C18", silica: "Silica", diol: "Diol", amino: "Amino",
+  // 反相
+  c18: "C18（ODS）",
+  c8: "C8（Octyl）",
+  c4: "C4（Butyl）",
+  phenyl: "Phenyl（苯基）",
+  cyano: "Cyano（氰基）",
+  hilic: "HILIC（亲水作用）",
+  amide: "Amide（酰胺）",
+  // 正相
+  silica: "Silica（硅胶）",
+  diol: "Diol（二醇）",
+  amino: "Amino（氨基）",
 };
+
+const REVERSED_COLUMN_CHEMISTRIES = ["c18", "c8", "c4", "phenyl", "cyano", "hilic", "amide"];
+const NORMAL_COLUMN_CHEMISTRIES = ["silica", "diol", "amino"];
+
+function getAllowedChemistries(phase) {
+  return phase === "normal" ? NORMAL_COLUMN_CHEMISTRIES : REVERSED_COLUMN_CHEMISTRIES;
+}
 
 const DEFAULT_IDS = ["benzoic-acid", "acetaminophen", "caffeine", "ibuprofen"];
 
@@ -779,7 +797,7 @@ function applyPreferences(preferences, { silent = false } = {}) {
   state.conditions.organic = organic;
   state.conditions.aqueous = phase === "normal" ? "hexane" : "water";
   state.conditions.temperature_c = temperature;
-  const allowedChemistry = phase === "normal" ? ["silica", "diol", "amino"] : ["c18"];
+  const allowedChemistry = getAllowedChemistries(phase);
   if (!allowedChemistry.includes(state.conditions.column.chemistry)) {
     state.conditions.column.chemistry = phase === "normal" ? "silica" : "c18";
   }
@@ -1464,6 +1482,13 @@ function bindSimControls() {
     applyColumnPreset(event.target.value);
   });
 
+  $("#column-chemistry").addEventListener("change", (event) => {
+    state.conditions.column.chemistry = event.target.value;
+    syncControls();
+    persist();
+    scheduleSim(0);
+  });
+
   $("#btn-add-grad").addEventListener("click", () => {
     const points = state.conditions.gradient;
     const last = points[points.length - 1] || { time_min: 0, percent_b: 5 };
@@ -1553,6 +1578,7 @@ function syncControls() {
   });
 
   syncColumnSelector();
+  renderChemistryOptions(conditions.phase);
 
   const maxRun = $("#max-run");
   maxRun.value = String(state.aiConstraints.max_run_min);
@@ -1779,7 +1805,7 @@ function setPhase(phase) {
     state.conditions.organic = normal ? "IPA" : "ACN";
   }
   state.conditions.aqueous = normal ? "hexane" : "water";
-  const allowed = normal ? ["silica", "diol", "amino"] : ["c18"];
+  const allowed = getAllowedChemistries(phase);
   if (!allowed.includes(state.conditions.column.chemistry)) {
     state.conditions.column.chemistry = normal ? "silica" : "c18";
   }
@@ -1839,6 +1865,21 @@ function syncColumnSelector() {
   if (summary) {
     const chemistry = COLUMN_CHEMISTRY_LABELS[column.chemistry] || "C18";
     summary.textContent = `${preset ? preset.name : "自定义"} · ${chemistry} · ${column.length_mm} × ${column.inner_diameter_mm} mm · ${column.particle_um} µm`;
+  }
+}
+
+function renderChemistryOptions(phase) {
+  const select = $("#column-chemistry");
+  if (!select) return;
+  const allowed = getAllowedChemistries(phase);
+  const current = state.conditions.column.chemistry;
+  select.innerHTML = allowed
+    .map((key) => `<option value="${key}">${COLUMN_CHEMISTRY_LABELS[key] || key}</option>`)
+    .join("");
+  if (allowed.includes(current)) {
+    select.value = current;
+  } else {
+    select.value = allowed[0];
   }
 }
 

@@ -684,12 +684,18 @@ def _coerce_ai_conditions(raw: Dict, fallback: Conditions) -> Conditions:
 
     column_raw = raw.get("column") if isinstance(raw.get("column"), dict) else {}
     chemistry_raw = str(column_raw.get("chemistry", "")).lower()
-    allowed_chemistry = ["c18", "silica", "diol", "amino"]
+    ALL_CHEMISTRY = [
+        "c18", "c8", "c4", "phenyl", "cyano", "hilic", "amide",
+        "silica", "diol", "amino",
+    ]
+    REVERSED_CHEMISTRY = {"c18", "c8", "c4", "phenyl", "cyano", "hilic", "amide"}
+    NORMAL_CHEMISTRY = {"silica", "diol", "amino"}
     default_chemistry = "silica" if phase == "normal" else "c18"
-    chemistry = chemistry_raw if chemistry_raw in allowed_chemistry else default_chemistry
-    if phase == "normal" and chemistry == "c18":
+    chemistry = chemistry_raw if chemistry_raw in ALL_CHEMISTRY else default_chemistry
+    # phase / chemistry 不一致时按 phase 选默认，允许同相多种填料保留
+    if phase == "normal" and chemistry in REVERSED_CHEMISTRY:
         chemistry = "silica"
-    if phase == "reversed" and chemistry != "c18":
+    if phase == "reversed" and chemistry in NORMAL_CHEMISTRY:
         chemistry = "c18"
     column = ColumnConfig(
         length_mm=_number(column_raw.get("length_mm"), fallback.column.length_mm, 30, 300),
