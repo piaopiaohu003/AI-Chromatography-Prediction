@@ -84,3 +84,22 @@ class AITestRequest(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     model: Optional[str] = None
+
+
+class ObservedPeak(BaseModel):
+    label: Optional[str] = None
+    tr_min: float = Field(..., ge=0.0, le=600.0)
+    height_mau: Optional[float] = Field(None, ge=0.0)
+    area: Optional[float] = Field(None, ge=0.0)
+    lambda_max_nm: Optional[float] = Field(None, ge=180.0, le=800.0)
+
+
+class IdentifyRequest(BaseModel):
+    conditions: Conditions
+    observed_peaks: List[ObservedPeak] = Field(..., min_length=1, max_length=20)
+    candidates: Optional[List[Compound]] = Field(None, max_length=200)
+    tolerance_min: float = Field(0.20, ge=0.02, le=2.0)
+    tolerance_pct: float = Field(0.02, ge=0.0, le=0.10)
+    min_score: float = Field(0.35, ge=0.0, le=1.0)
+    max_candidates: int = Field(5, ge=1, le=10)
+    include_reconstruction: bool = True

@@ -10,8 +10,10 @@ from fastapi.staticfiles import StaticFiles
 
 from . import ai_client
 from .compounds import CATEGORIES, COMPOUNDS
+from .identify import identify
 from .models import (
     AITestRequest,
+    IdentifyRequest,
     RecommendRequest,
     SimulateRequest,
 )
@@ -66,6 +68,18 @@ def recommend_endpoint(payload: RecommendRequest) -> dict:
         return recommend(payload.compounds, payload.constraints, payload.ai)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"条件设计失败：{exc}") from exc
+
+
+@app.post("/api/identify")
+def identify_endpoint(payload: IdentifyRequest) -> dict:
+    if not payload.observed_peaks:
+        raise HTTPException(status_code=400, detail="至少提供一个观测峰")
+    try:
+        return identify(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"组分识别失败：{exc}") from exc
 
 
 @app.get("/api/ai/status")
