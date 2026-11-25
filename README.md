@@ -30,6 +30,18 @@ export HOST=0.0.0.0 PORT=8000
 
 账号数据保存为 JSON 文件，路径由 `CHROM_USER_DB` 指定，缺省位于系统临时目录。部署实例的临时目录可能在重新部署后重置，此时需要重新注册。
 
+### Node.js 运行（线上部署版本）
+
+仓库同时提供一份与 FastAPI 接口契约一致的 Node.js 实现，用于函数型托管：
+
+```bash
+cd node-app
+sh build.sh          # 同步 static/ 到 public/，并生成 dist/ 产物
+PORT=8000 node server.js
+```
+
+`build.sh` 从仓库根的 `static/` 复制前端资源，`server.js` 同时提供 `/api/*` 与静态页面。两种实现共用相同的环境变量与账户数据格式，切换后端无需修改前端。
+
 ## 科学模型
 
 **保留模型（LSS）**
@@ -90,18 +102,26 @@ log10 k = log10 k_ref − S_np · (φ − 0.10)
 | `GET/POST` | `/api/ai/status` | 大模型配置状态 |
 | `POST` | `/api/ai/test` | 测试大模型连接 |
 
+`/api/identify` 目前以 API 形式提供：提交观测保留时间与候选组分，即可按当前条件反查最可能的组分及匹配分数。
+
 ## 目录结构
 
 ```
-app/
+app/                  FastAPI 后端
   compounds.py    内置化合物库与 LSS 参数
   simulation.py   保留/峰形/梯度数值积分与指标计算
   recommend.py    规则专家系统 + LLM 条件设计
   ai_client.py    OpenAI 兼容客户端
   main.py         FastAPI 路由与静态资源
-static/
+node-app/             Node.js 后端（线上部署）
+  server.js       HTTP 服务、鉴权、静态托管
+  lib/            模型校验、模拟、推荐、识别、PubChem、账户
+  build.sh        前端同步与 dist 构建
+static/               前端源码（两种后端共用）
   index.html      单页界面
   js/app.js       交互、状态与 API 调用
   js/chart.js     Canvas 色谱图渲染
   css/style.css   深色实验室风格样式
 ```
+
+修改前端后需执行 `cp static/... node-app/public/...`（或运行 `node-app/build.sh`）再部署，避免线上使用旧资源。

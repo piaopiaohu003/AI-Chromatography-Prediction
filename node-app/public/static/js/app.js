@@ -308,7 +308,11 @@ async function postJSON(path, body, signal) {
     signal,
   });
   if (!res.ok) {
-    if (res.status === 401) showAuthGate();
+    if (res.status === 401) {
+      state.user = null;
+      renderUser();
+      showAuthGate();
+    }
     let detail = "";
     try {
       const data = await res.json();
@@ -451,6 +455,7 @@ function setAuthBusy(busy) {
 
 async function submitAuth(event) {
   event.preventDefault();
+  if (authBusy) return;
   hideAuthError();
   const username = $("#auth-username").value.trim();
   const password = $("#auth-password").value;
@@ -464,6 +469,7 @@ async function submitAuth(event) {
     return;
   }
   setAuthBusy(true);
+  authBusy = true;
   const path = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
   try {
     const res = await fetch(path, {
@@ -488,6 +494,7 @@ async function submitAuth(event) {
   } catch (err) {
     showAuthError(err.message);
   } finally {
+    authBusy = false;
     setAuthBusy(false);
   }
 }
@@ -527,6 +534,11 @@ async function apiJSON(path, method = "GET", body) {
   let data = {};
   try { data = await res.json(); } catch (_) { /* ignore */ }
   if (!res.ok) {
+    if (res.status === 401) {
+      state.user = null;
+      renderUser();
+      showAuthGate();
+    }
     throw new Error(typeof data.detail === "string" ? data.detail : `请求失败（HTTP ${res.status}）`);
   }
   return data;
@@ -605,7 +617,8 @@ function bindAccount() {
   });
 
   $("#pwd-new").addEventListener("input", updatePasswordStrength);
-  $("#btn-pwd-save").addEventListener("click", async () => {
+  $("#pwd-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
     const current = $("#pwd-current").value;
     const next = $("#pwd-new").value;
     const confirm = $("#pwd-confirm").value;
@@ -700,6 +713,7 @@ function openAccount() {
     ? new Date(state.user.created_at).toLocaleDateString("zh-CN")
     : "";
   subtitle.textContent = `${state.user.username}${created ? ` · 注册于 ${created}` : ""}`;
+  $("#pwd-username").value = state.user.username;
   $("#modal-account").classList.remove("hidden");
   loadAccount();
 }
@@ -836,6 +850,7 @@ document.addEventListener("DOMContentLoaded", init);
 
 let appStarted = false;
 let authMode = "login";
+let authBusy = false;
 
 async function init() {
   restore();
@@ -1916,6 +1931,10 @@ async function generateRecommendation() {
     toast("请先添加待分析的组分", "err");
     return;
   }
+  if (state.compounds.length > 20) {
+    toast("一次最多分析 20 个组分，请先在样品组分中精简", "err");
+    return;
+  }
   state.aiBusy = true;
   lastAiError = "";
   const button = $("#btn-recommend");
@@ -1948,9 +1967,11 @@ async function generateRecommendation() {
         </div>
         <h3>条件生成失败</h3>
         <p>${escapeHtml(err.message)}</p>
-        <button class="ghost-btn" style="margin-top:16px" onclick="document.getElementById('btn-recommend').click()">重试</button>
+        <button class="ghost-btn" style="margin-top:16px" id="btn-retry-ai">重试</button>
       </section>
     `;
+    const retry = $("#btn-retry-ai");
+    if (retry) retry.addEventListener("click", () => generateRecommendation());
     toast(err.message, "err");
   } finally {
     state.aiBusy = false;
@@ -2038,7 +2059,7 @@ function renderAIResult(result) {
       <div class="chips" style="justify-content:flex-start;margin-top:8px">
         <span class="chip">理论塔板数 <b>${metrics.plates ?? "—"}</b></span>
         <span class="chip">柱压 <b>${metrics.pressure_bar == null ? "—" : `${Math.round(metrics.pressure_bar)} bar`}</b></span>
-        <span class="chip ${metrics.min_resolution == null ? "" : metrics.min_resolution >= 1.5 ? "good" : "bad"}">最小 Rs <b>${metrics.min_resolution == null ? "—" : fmt(metrics.min_resolution, 2)}</b></span>
+        <span class="chip ${metrics.min_resolution == null ? "" : metrics.min_resolution >= 1.5 ? "good" : metrics.min_resolution >= 1.0 ? "warn" : "bad"}">最小 Rs <b>${metrics.min_resolution == null ? "—" : fmt(metrics.min_resolution, 2)}</b></span>
         <span class="chip">检出峰 <b>${metrics.num_peaks}</b></span>
       </div>
 
@@ -2085,6 +2106,10 @@ function applyAIResult(result) {
 
 function bindSettings() {
   $("#btn-settings").addEventListener("click", openSettings);
+  $("#ai-settings-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    $("#btn-ai-save").click();
+  });
   $("#btn-ai-save").addEventListener("click", () => {
     state.aiConfig = {
       base_url: $("#ai-base").value.trim(),

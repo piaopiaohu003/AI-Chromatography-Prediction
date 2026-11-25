@@ -61,7 +61,11 @@ function readCookie(req, name) {
     const index = part.indexOf('=');
     if (index === -1) continue;
     if (part.slice(0, index).trim() === name) {
-      return decodeURIComponent(part.slice(index + 1).trim());
+      try {
+        return decodeURIComponent(part.slice(index + 1).trim());
+      } catch (_) {
+        return null;
+      }
     }
   }
   return null;

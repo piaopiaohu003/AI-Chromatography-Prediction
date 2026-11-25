@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ChromAI · 智能色谱方法平台</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232dd4bf' stroke-width='1.8'%3E%3Cpath d='M9 3h6M10 3v6.2L5.6 17a2.8 2.8 0 0 0 2.4 4.2h8a2.8 2.8 0 0 0 2.4-4.2L14 9.2V3'/%3E%3Cpath d='M7.6 14.5h8.8'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
@@ -382,15 +383,17 @@
         </button>
       </div>
       <div class="modal-body">
-        <label class="stack-label">Base URL
-          <input type="text" id="ai-base" placeholder="https://api.deepseek.com/v1">
-        </label>
-        <label class="stack-label">模型名称
-          <input type="text" id="ai-model" placeholder="deepseek-chat">
-        </label>
-        <label class="stack-label">API Key
-          <input type="password" id="ai-key" placeholder="sk-...">
-        </label>
+        <form id="ai-settings-form" autocomplete="off">
+          <label class="stack-label">Base URL
+            <input type="text" id="ai-base" placeholder="https://api.deepseek.com/v1">
+          </label>
+          <label class="stack-label">模型名称
+            <input type="text" id="ai-model" placeholder="deepseek-chat">
+          </label>
+          <label class="stack-label">API Key
+            <input type="password" id="ai-key" placeholder="sk-..." autocomplete="off">
+          </label>
+        </form>
         <p class="hint">Key 仅保存在当前浏览器，并随请求发送到本机服务；服务端不会写入日志。也可通过环境变量 CHROM_AI_API_KEY 配置。</p>
         <div class="settings-status" id="settings-status"></div>
       </div>
@@ -454,20 +457,23 @@
         </section>
 
         <section class="account-section hidden" id="account-security">
-          <label class="stack-label">当前密码
-            <input type="password" id="pwd-current" autocomplete="current-password">
-          </label>
-          <label class="stack-label">新密码
-            <input type="password" id="pwd-new" autocomplete="new-password">
-          </label>
-          <label class="stack-label">确认新密码
-            <input type="password" id="pwd-confirm" autocomplete="new-password">
-          </label>
-          <div class="pwd-meter"><i id="pwd-meter-bar"></i></div>
-          <p class="hint" id="pwd-hint">至少 8 位，建议包含大小写字母、数字与符号。</p>
-          <div class="account-actions">
-            <button class="primary-btn small" id="btn-pwd-save">修改密码</button>
-          </div>
+          <form id="pwd-form" autocomplete="on">
+            <input type="text" id="pwd-username" name="username" class="hidden" autocomplete="username" tabindex="-1" aria-hidden="true">
+            <label class="stack-label">当前密码
+              <input type="password" id="pwd-current" name="current_password" autocomplete="current-password">
+            </label>
+            <label class="stack-label">新密码
+              <input type="password" id="pwd-new" name="new_password" autocomplete="new-password">
+            </label>
+            <label class="stack-label">确认新密码
+              <input type="password" id="pwd-confirm" name="confirm_password" autocomplete="new-password">
+            </label>
+            <div class="pwd-meter"><i id="pwd-meter-bar"></i></div>
+            <p class="hint" id="pwd-hint">至少 8 位，建议包含大小写字母、数字与符号。</p>
+            <div class="account-actions">
+              <button type="submit" class="primary-btn small" id="btn-pwd-save">修改密码</button>
+            </div>
+          </form>
         </section>
 
         <section class="account-section hidden" id="account-favorites">
@@ -533,7 +539,7 @@
     </div>
   </div>
 
-  <div class="toast-stack" id="toasts"></div>
+  <div class="toast-stack" id="toasts" aria-live="polite" aria-atomic="false"></div>
 
   <script type="module" src="/static/js/app.js"></script>
 </body>
