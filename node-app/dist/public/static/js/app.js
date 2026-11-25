@@ -1375,12 +1375,8 @@ function syncPhaseUI() {
   lightSyncSegment("#seg-ai-phase", state.aiConstraints.phase);
   $("#phase-note").classList.toggle("hidden", !normal);
   $("#ph-field").classList.toggle("hidden", normal);
-  $("#aqueous-label").textContent = normal ? "非极性相 A" : "水相 A";
-  $("#organic-label").textContent = normal ? "极性调节剂 B" : "有机相 B";
-  $("#iso-label").textContent = normal ? "极性调节剂比例 B" : "有机相比例 B";
-  $("#grad-hint").textContent = normal
-    ? "时间从 0 min 起，%B 为极性调节剂体积分数"
-    : "时间从 0 min 起，%B 为有机相体积分数";
+  $("#iso-label").textContent = "B 相比例";
+  $("#grad-hint").textContent = "时间从 0 min 起，%B 为 B 相体积分数";
   $("#column-hint").textContent = normal
     ? "正相推荐硅胶/二醇/氨基柱，A 相为正己烷"
     : "切换预设会同时应用推荐流速与系统延迟体积";
