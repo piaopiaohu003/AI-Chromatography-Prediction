@@ -267,6 +267,10 @@ let simAbort = null;
 let libraryTimer = null;
 let libraryAbort = null;
 let librarySeq = 0;
+const quickSearch = { query: "", online: [], active: -1, loading: false };
+let quickTimer = null;
+let quickAbort = null;
+let quickSeq = 0;
 let lastAiError = "";
 
 /* ------------------------------------------------------------------ */
@@ -885,6 +889,7 @@ async function startApp() {
   bindAIControls();
   bindSettings();
   bindLibrary();
+  bindQuickSearch();
   bindExport();
   bindAccount();
   await loadAccount();
@@ -2222,6 +2227,174 @@ function bindLibrary() {
     );
   });
   $("#btn-add-custom").addEventListener("click", addCustomCompound);
+}
+
+/* quick compound search (sidebar)                                     */
+/* ------------------------------------------------------------------ */
+
+function bindQuickSearch() {
+  const input = $("#quick-search");
+  const box = $("#quick-results");
+  if (!input || !box) return;
+
+  input.addEventListener("input", () => {
+    quickSearch.query = input.value.trim();
+    quickSearch.active = -1;
+    renderQuickResults();
+    scheduleQuickOnline(quickSearch.query);
+  });
+
+  input.addEventListener("focus", () => {
+    quickSearch.query = input.value.trim();
+    if (quickSearch.query) renderQuickResults();
+  });
+
+  input.addEventListener("keydown", (event) => {
+    const items = quickMatches();
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      if (!items.length) return;
+      event.preventDefault();
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      quickSearch.active = (quickSearch.active + delta + items.length) % items.length;
+      renderQuickResults();
+      const activeNode = $("#quick-results .quick-result.active");
+      if (activeNode) activeNode.scrollIntoView({ block: "nearest" });
+    } else if (event.key === "Enter") {
+      if (!items.length) return;
+      event.preventDefault();
+      addQuickCompound(items[quickSearch.active >= 0 ? quickSearch.active : 0]);
+    } else if (event.key === "Escape") {
+      closeQuickResults();
+    }
+  });
+
+  box.addEventListener("click", (event) => {
+    const row = event.target.closest("[data-quick-id]");
+    if (!row) return;
+    const id = row.dataset.quickId;
+    const item = state.library.find((c) => c.id === id)
+      || quickSearch.online.find((c) => c.id === id);
+    if (item) addQuickCompound(item);
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".quick-search")) closeQuickResults();
+  });
+}
+
+function quickMatches() {
+  const query = quickSearch.query.toLowerCase();
+  if (!query) return [];
+  const local = state.library.filter((item) =>
+    `${item.name} ${item.name_en || ""} ${item.id} ${item.category || ""}`
+      .toLowerCase()
+      .includes(query));
+  const seen = new Set(local.map((item) => item.id));
+  const localNames = new Set(local.map((item) => String(item.name_en || item.name).toLowerCase()));
+  const online = quickSearch.online.filter((item) =>
+    !seen.has(item.id) && !localNames.has(String(item.name_en || item.name).toLowerCase()));
+  return local.concat(online).slice(0, 12);
+}
+
+function renderQuickResults() {
+  const input = $("#quick-search");
+  const box = $("#quick-results");
+  if (!input || !box) return;
+  if (!quickSearch.query) {
+    closeQuickResults();
+    return;
+  }
+  const items = quickMatches();
+  const rows = items.map((item, index) => {
+    const added = state.compounds.some((c) => c.id === item.id);
+    const online = item.source === "pubchem";
+    return `
+      <div class="quick-result ${index === quickSearch.active ? "active" : ""} ${added ? "added" : ""}"
+        role="option" aria-selected="${index === quickSearch.active}" data-quick-id="${escapeHtml(item.id)}">
+        <div class="qr-main">
+          <div class="qr-name">${escapeHtml(item.name)}${online ? '<span class="qr-tag">PubChem·估算</span>' : ""}</div>
+          <div class="qr-meta">${escapeHtml(item.name_en || item.id)} · logP ${fmt(item.log_p, 1)}${item.pka != null ? ` · pKa ${fmt(item.pka, 1)}` : ""}</div>
+        </div>
+        <span class="qr-add">${added ? "已添加" : "添加"}</span>
+      </div>
+    `;
+  }).join("");
+  const status = quickSearch.loading
+    ? '<div class="quick-status">正在检索 PubChem…</div>'
+    : (!items.length
+      ? `<div class="quick-status">未找到匹配化合物${quickSearch.query.length < 2 ? "，输入 2 个字符以上可检索 PubChem" : ""}</div>`
+      : "");
+  box.innerHTML = rows + status;
+  box.classList.remove("hidden");
+  input.setAttribute("aria-expanded", "true");
+}
+
+function closeQuickResults() {
+  const box = $("#quick-results");
+  const input = $("#quick-search");
+  if (box) box.classList.add("hidden");
+  if (input) input.setAttribute("aria-expanded", "false");
+  quickSearch.active = -1;
+}
+
+function scheduleQuickOnline(query) {
+  clearTimeout(quickTimer);
+  if (quickAbort) quickAbort.abort();
+  quickSearch.online = [];
+  quickSearch.loading = false;
+  quickSeq += 1;
+  if (query.length < 2) {
+    renderQuickResults();
+    return;
+  }
+  quickSearch.loading = true;
+  renderQuickResults();
+  quickTimer = setTimeout(() => runQuickOnline(query), 350);
+}
+
+async function runQuickOnline(query) {
+  const seq = ++quickSeq;
+  quickAbort = new AbortController();
+  try {
+    const res = await fetch(
+      `/api/compounds/search?q=${encodeURIComponent(query)}&limit=6`,
+      { signal: quickAbort.signal },
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (seq !== quickSeq) return;
+    quickSearch.online = data.online || [];
+    quickSearch.loading = false;
+    quickSearch.active = Math.min(quickSearch.active, quickMatches().length - 1);
+    renderQuickResults();
+  } catch (err) {
+    if (err.name === "AbortError") return;
+    if (seq !== quickSeq) return;
+    quickSearch.loading = false;
+    renderQuickResults();
+  }
+}
+
+function addQuickCompound(item) {
+  if (state.compounds.some((c) => c.id === item.id)) {
+    toast("该组分已在样品中");
+    return;
+  }
+  if (state.compounds.length >= 20) {
+    toast("样品组分已达上限 20 个", "err");
+    return;
+  }
+  state.compounds.push({ ...item, concentration_mg_l: 100 });
+  quickSearch.query = "";
+  quickSearch.online = [];
+  const input = $("#quick-search");
+  if (input) input.value = "";
+  closeQuickResults();
+  onCompoundsChanged();
+  toast(
+    item.estimated ? `已添加「${item.name}」，在线参数为估算值` : `已添加「${item.name}」`,
+    "ok",
+  );
 }
 
 function openLibrary() {

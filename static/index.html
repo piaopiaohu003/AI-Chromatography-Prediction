@@ -104,6 +104,13 @@
             <div class="head-title"><h2>样品组分</h2><span class="pill" id="compound-count">0</span></div>
             <button class="text-btn" id="btn-add-compound">+ 添加</button>
           </div>
+          <div class="quick-search">
+            <div class="search-box">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+              <input type="text" id="quick-search" placeholder="搜索并添加化合物，支持 PubChem 在线…" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="quick-results" aria-autocomplete="list">
+            </div>
+            <div class="quick-results hidden" id="quick-results" role="listbox" aria-label="化合物搜索结果"></div>
+          </div>
           <div class="compound-list" id="compound-list"></div>
         </section>
 
