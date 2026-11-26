@@ -900,7 +900,7 @@ function applyPreferences(preferences, { silent = false } = {}) {
   if (!allowedChemistry.includes(state.conditions.column.chemistry)) {
     state.conditions.column.chemistry = phase === "normal" ? "silica" : "c18";
   }
-  const detectors = ["UV", "FLD", "RID", "ELSD", "MS"];
+  const detectors = ["UV", "FLD", "RID", "ELSD", "CAD", "MS"];
   state.aiConstraints.detector = detectors.includes(preferences.default_detector)
     ? preferences.default_detector
     : "UV";

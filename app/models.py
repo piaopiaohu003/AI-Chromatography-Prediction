@@ -90,7 +90,7 @@ class SimulateRequest(BaseModel):
 
 
 class RecommendConstraints(BaseModel):
-    detector: Literal["UV", "FLD", "RID", "ELSD", "MS"] = "UV"
+    detector: Literal["UV", "FLD", "RID", "ELSD", "CAD", "MS"] = "UV"
     phase: Literal["auto", "reversed", "normal"] = "auto"
     organic: Literal["auto", "ACN", "MeOH", "IPA", "EtOAc"] = "auto"
     mode: Literal["auto", "isocratic", "gradient"] = "auto"

@@ -115,14 +115,14 @@ def _number(value, default: float, low: float, high: float) -> float:
 
 
 def _buffer_for(ph: float, detector: str) -> str:
-    if detector in ("MS", "ELSD"):
-        # Both detectors require volatile buffers (no involatile phosphate).
+    if detector in ("MS", "ELSD", "CAD"):
+        # These detectors require volatile buffers (no involatile phosphate).
         if ph <= 3.0:
-            return "0.1% 甲酸水溶液（pH≈2.5，挥发性缓冲盐，MS/ELSD 兼容）"
+            return "0.1% 甲酸水溶液（pH≈2.5，挥发性缓冲盐，MS/ELSD/CAD 兼容）"
         if ph <= 5.5:
-            return "5 mM 甲酸铵缓冲液（pH≈4.5，挥发性缓冲盐，MS/ELSD 兼容）"
+            return "5 mM 甲酸铵缓冲液（pH≈4.5，挥发性缓冲盐，MS/ELSD/CAD 兼容）"
         if ph <= 7.5:
-            return "10 mM 乙酸铵缓冲液（pH≈6.8，挥发性缓冲盐，MS/ELSD 兼容）"
+            return "10 mM 乙酸铵缓冲液（pH≈6.8，挥发性缓冲盐，MS/ELSD/CAD 兼容）"
         if ph <= 10.0:
             return "10 mM 碳酸氢铵（pH≈9.0，挥发性，需耐碱柱）"
         return "5 mM 碳酸铵/氨水（pH≈10.2，挥发性，需耐碱柱）"
@@ -153,7 +153,7 @@ def _choose_ph(compounds: List[Compound], detector: str) -> Tuple[float, List[st
             score -= 0.08
         if ph < 2.8:
             score -= 0.02 * abs(ph - 2.5)
-        if detector in ("MS", "ELSD") and ph > 8.5:
+        if detector in ("MS", "ELSD", "CAD") and ph > 8.5:
             score -= 0.1
         if score > best_score + 1e-9:
             best_score = score
@@ -258,6 +258,7 @@ DETECTOR_LABELS = {
     "FLD": "荧光检测器（FLD）",
     "RID": "示差折光检测器（RID）",
     "ELSD": "蒸发光散射检测器（ELSD）",
+    "CAD": "电雾式检测器（CAD）",
     "MS": "液相色谱-质谱联用（LC-MS / ESI）",
 }
 
@@ -299,6 +300,17 @@ def _detector_params(detector: str, wavelength: float, temperature_c: float) -> 
             {"label": "增益", "value": "中"},
         ]
         notes.append("必须使用挥发性缓冲盐（甲酸/甲酸铵/乙酸铵），禁用磷酸盐等不挥发性盐。")
+    elif detector == "CAD":
+        parameters = [
+            {"label": "雾化器温度", "value": "35 °C"},
+            {"label": "蒸发温度", "value": "50 °C"},
+            {"label": "载气（N₂）压力", "value": "35 psi"},
+            {"label": "滤光片量程", "value": "100 pA"},
+            {"label": "采样速率", "value": "10 Hz"},
+        ]
+        notes.append("通用型检测器，对无紫外吸收的糖类、脂类、表面活性剂等响应良好；")
+        notes.append("必须使用挥发性缓冲盐（甲酸/甲酸铵/乙酸铵），禁用磷酸盐等不挥发性盐。")
+        notes.append("响应与质量浓度相关，定量需用标准品校准并保持载气与雾化条件稳定。")
     elif detector == "MS":
         parameters = [
             {"label": "离子源", "value": "ESI（可切换 APCI）"},

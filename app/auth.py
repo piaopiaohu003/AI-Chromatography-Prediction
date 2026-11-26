@@ -370,7 +370,7 @@ def _normalize_preferences(patch: object) -> dict:
     if organic not in options:
         organic = options[0]
     detector = patch.get("default_detector")
-    if detector not in ("UV", "FLD", "RID", "ELSD", "MS"):
+    if detector not in ("UV", "FLD", "RID", "ELSD", "CAD", "MS"):
         detector = DEFAULT_PREFERENCES["default_detector"]
     try:
         temperature = int(round(float(patch.get("default_temperature_c", 30))))

@@ -247,7 +247,7 @@ function normalizeConstraints(raw, path = 'constraints') {
     throw new ValidationError(`${path} 必须是对象`);
   }
   return {
-    detector: parseLiteral(raw.detector, `${path}.detector`, ['UV', 'FLD', 'RID', 'ELSD', 'MS'], 'UV'),
+    detector: parseLiteral(raw.detector, `${path}.detector`, ['UV', 'FLD', 'RID', 'ELSD', 'CAD', 'MS'], 'UV'),
     phase: parseLiteral(raw.phase, `${path}.phase`, ['auto', 'reversed', 'normal'], 'auto'),
     organic: parseLiteral(raw.organic, `${path}.organic`, ['auto', 'ACN', 'MeOH', 'IPA', 'EtOAc'], 'auto'),
     mode: parseLiteral(raw.mode, `${path}.mode`, ['auto', 'isocratic', 'gradient'], 'auto'),
