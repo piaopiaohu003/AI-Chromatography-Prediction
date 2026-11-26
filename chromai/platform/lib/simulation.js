@@ -201,6 +201,41 @@ function epsRel(compound, wavelengthNm) {
     * Math.exp(-0.5 * Math.pow((wavelengthNm - compound.lambda_max_nm) / bandwidth, 2));
 }
 
+// Average molar absorptivity across the detector slit band.
+function bandEps(compound, wavelengthNm, bandwidthNm) {
+  const width = Math.max(0.1, Number(bandwidthNm) || 10.0);
+  const steps = 5;
+  let sum = 0.0;
+  for (let i = 0; i < steps; i += 1) {
+    const offset = (i / (steps - 1) - 0.5) * width;
+    sum += epsRel(compound, wavelengthNm + offset);
+  }
+  return sum / steps;
+}
+
+// Relative detector response. UV follows Beer-Lambert absorptivity; the other
+// detectors use documented approximations of their universal/fluorescence
+// behaviour, normalised to the same arbitrary response scale.
+function detectorResponse(compound, conditions) {
+  switch (conditions.detector) {
+    case 'FLD': {
+      const offset = conditions.excitation_nm - compound.lambda_max_nm;
+      const quantum = Math.exp(-0.5 * Math.pow(offset / 25.0, 2));
+      return clamp(quantum, 0.02, 1.0) * 1.4;
+    }
+    case 'RID':
+      return 1.0;
+    case 'ELSD':
+      return clamp(conditions.gain / 5.0, 0.2, 2.0);
+    case 'CAD':
+      return 1.0;
+    case 'MS':
+      return 1.25;
+    default:
+      return bandEps(compound, conditions.wavelength_nm, conditions.bandwidth_nm);
+  }
+}
+
 function gradientArrays(conditions, flow, runTime) {
   // Every gradient row carries B/C/D percentages so quaternary pumps can ramp
   // auxiliary phases; A is always the remainder.
@@ -392,7 +427,7 @@ function simulate(compounds, conditions) {
   const tau = new Array(n);
   for (let i = 0; i < n; i += 1) {
     const c = compounds[i];
-    epsRelArr[i] = epsRel(c, conditions.wavelength_nm);
+    epsRelArr[i] = detectorResponse(c, conditions);
     massUg[i] = c.concentration_mg_l * conditions.injection_volume_ul / 1000.0;
     peakArea[i] = massUg[i] * epsRelArr[i] * RESPONSE_SCALE;
     visible[i] = Number.isFinite(tr[i]) && epsRelArr[i] >= 0.03;
@@ -567,11 +602,23 @@ function simulate(compounds, conditions) {
   for (let i = 0; i < compounds.length; i += 1) {
     const c = compounds[i];
     const eps = epsRelArr[i];
-    if (eps < 0.05) {
+    if (conditions.detector === 'UV' && eps < 0.05) {
       warnings.push(
         `「${c.name}」在 ${conditions.wavelength_nm.toFixed(0)} nm 处摩尔吸光系数仅 ${eps.toFixed(3)}，建议更换检测波长（λmax≈${c.lambda_max_nm.toFixed(0)} nm）或检测器。`,
       );
     }
+  }
+  if (conditions.detector === 'FLD') {
+    warnings.push('荧光响应按激发波长邻近 λmax 估算，仅对具天然荧光或可衍生化的组分适用。');
+  } else if (conditions.detector === 'RID') {
+    warnings.push('RID 为通用型质量响应，对流动相组成与温度敏感，建议等度洗脱并稳定柱温。');
+    if (conditions.mode === 'gradient') {
+      warnings.push('梯度洗脱会持续改变流动相折射率，RID 基线漂移风险高，建议改用等度。');
+    }
+  } else if (conditions.detector === 'ELSD' || conditions.detector === 'CAD') {
+    warnings.push('气溶胶类检测器需使用挥发性缓冲盐（甲酸/甲酸铵/乙酸铵），禁用磷酸盐。');
+  } else if (conditions.detector === 'MS') {
+    warnings.push(`MS 响应按 ${conditions.ionization} 通用电离效率估算，实际信号受基质与离子源参数影响。`);
   }
   if (phase === 'reversed') {
     for (const c of compounds) {
@@ -678,6 +725,7 @@ function simulate(compounds, conditions) {
     min_resolution: resolutions.length ? pyRound(minOf(resolutions), 2) : null,
     max_k: finiteIdx.length ? pyRound(maxOf(finiteIdx.map((i) => kElution[i])), 2) : null,
     wavelength_nm: conditions.wavelength_nm,
+    detector: conditions.detector,
     organic: conditions.organic,
     organic_label: organicLabel(conditions),
     aqueous: conditions.aqueous,

@@ -30,6 +30,18 @@ const DEFAULT_CONDITIONS = () => ({
   temperature_c: 30,
   ph: 2.5,
   wavelength_nm: 254,
+  detector: "UV",
+  bandwidth_nm: 10,
+  excitation_nm: 250,
+  emission_nm: 400,
+  cell_temperature_c: 30,
+  drift_tube_c: 60,
+  gas_flow_l_min: 1.5,
+  gain: 5,
+  evaporation_c: 45,
+  gas_pressure_psi: 35,
+  ionization: "ESI+",
+  cone_voltage_v: 30,
   column: {
     length_mm: 150,
     inner_diameter_mm: 4.6,
@@ -1464,11 +1476,129 @@ const OUTPUT_MAP = {
   flow_ml_min: { id: "flow-out", format: (v) => `${Number(v).toFixed(2)} mL/min` },
   temperature_c: { id: "temperature-out", format: (v) => `${Math.round(v)} °C` },
   ph: { id: "ph-out", format: (v) => Number(v).toFixed(1) },
-  wavelength_nm: { id: "wavelength-out", format: (v) => `${Math.round(v)} nm` },
 };
+
+const DETECTOR_DEFS = {
+  UV: {
+    label: "UV / DAD",
+    fields: [
+      { key: "wavelength_nm", label: "检测波长", unit: "nm", min: 190, max: 800, step: 1 },
+      { key: "bandwidth_nm", label: "狭缝带宽", unit: "nm", min: 2, max: 40, step: 1 },
+    ],
+  },
+  FLD: {
+    label: "FLD 荧光",
+    fields: [
+      { key: "excitation_nm", label: "激发波长 Ex", unit: "nm", min: 190, max: 500, step: 1 },
+      { key: "emission_nm", label: "发射波长 Em", unit: "nm", min: 210, max: 800, step: 1 },
+      { key: "bandwidth_nm", label: "狭缝带宽", unit: "nm", min: 2, max: 40, step: 1 },
+    ],
+  },
+  RID: {
+    label: "RID 示差",
+    fields: [
+      { key: "cell_temperature_c", label: "检测池温度", unit: "°C", min: 20, max: 60, step: 1 },
+    ],
+  },
+  ELSD: {
+    label: "ELSD 蒸发光",
+    fields: [
+      { key: "drift_tube_c", label: "漂移管温度", unit: "°C", min: 30, max: 100, step: 1 },
+      { key: "gas_flow_l_min", label: "载气流量", unit: "L/min", min: 0.3, max: 3, step: 0.1 },
+      { key: "gain", label: "增益", unit: "", min: 1, max: 10, step: 1 },
+    ],
+  },
+  CAD: {
+    label: "CAD 电雾式",
+    fields: [
+      { key: "evaporation_c", label: "蒸发温度", unit: "°C", min: 20, max: 80, step: 1 },
+      { key: "gas_pressure_psi", label: "载气压力", unit: "psi", min: 10, max: 60, step: 1 },
+    ],
+  },
+  MS: {
+    label: "LC-MS",
+    fields: [
+      { key: "cone_voltage_v", label: "锥孔电压", unit: "V", min: 5, max: 150, step: 1 },
+    ],
+    select: { key: "ionization", label: "离子化模式", options: ["ESI+", "ESI-"] },
+  },
+};
+
+function detectorSummary(conditions) {
+  switch (conditions.detector) {
+    case "FLD":
+      return `FLD Ex ${Math.round(conditions.excitation_nm)}/Em ${Math.round(conditions.emission_nm)} nm`;
+    case "RID":
+      return `RID ${Math.round(conditions.cell_temperature_c)} °C`;
+    case "ELSD":
+      return `ELSD ${Math.round(conditions.drift_tube_c)} °C`;
+    case "CAD":
+      return `CAD ${Math.round(conditions.evaporation_c)} °C`;
+    case "MS":
+      return `MS ${conditions.ionization}`;
+    default:
+      return `UV ${Math.round(conditions.wavelength_nm)} nm`;
+  }
+}
+
+function renderDetectorParams() {
+  const container = $("#detector-params");
+  if (!container) return;
+  const conditions = state.conditions;
+  const definition = DETECTOR_DEFS[conditions.detector] || DETECTOR_DEFS.UV;
+  const select = $("#sim-detector");
+  if (select) select.value = conditions.detector;
+  const output = $("#sim-detector-out");
+  if (output) output.textContent = definition.label;
+  container.innerHTML = definition.fields.map((field) => `
+    <div class="field inline-field">
+      <label for="det-${field.key}">${field.label}</label>
+      <div class="inline-input">
+        <input id="det-${field.key}" type="number" data-detector-key="${field.key}"
+          min="${field.min}" max="${field.max}" step="${field.step}"
+          value="${Number(conditions[field.key]) || field.min}">
+        <span>${field.unit}</span>
+      </div>
+    </div>
+  `).join("") + (definition.select ? `
+    <div class="field inline-field">
+      <label for="det-${definition.select.key}">${definition.select.label}</label>
+      <div class="inline-input">
+        <select data-detector-select="${definition.select.key}" id="det-${definition.select.key}">
+          ${definition.select.options.map((option) => `
+            <option value="${option}" ${conditions[definition.select.key] === option ? "selected" : ""}>${option}</option>
+          `).join("")}
+        </select>
+      </div>
+    </div>
+  ` : "");
+}
 
 function bindSimControls() {
   renderColumnOptions();
+  renderDetectorParams();
+  $("#sim-detector").addEventListener("change", (event) => {
+    state.conditions.detector = event.target.value;
+    renderDetectorParams();
+    persist();
+    scheduleSim();
+  });
+  $("#detector-params").addEventListener("input", (event) => {
+    const input = event.target.closest("[data-detector-key]");
+    if (!input) return;
+    const value = parseFloat(input.value);
+    if (!Number.isFinite(value)) return;
+    state.conditions[input.dataset.detectorKey] = value;
+    persist();
+    scheduleSim();
+  });
+  $("#detector-params").addEventListener("change", (event) => {
+    const select = event.target.closest("[data-detector-select]");
+    if (!select) return;
+    state.conditions[select.dataset.detectorSelect] = select.value;
+    persist();
+    scheduleSim();
+  });
   $("#compound-list").addEventListener("input", (event) => {
     const input = event.target.closest("[data-conc]");
     if (!input) return;
@@ -1702,6 +1832,7 @@ function syncControls() {
 
   syncColumnSelector();
   renderChemistryOptions(conditions.phase);
+  renderDetectorParams();
 
   const maxRun = $("#max-run");
   maxRun.value = String(state.aiConstraints.max_run_min);
@@ -2331,7 +2462,7 @@ async function runSimulation() {
       : `${aqueousLabel}/${organicLabel}${auxNote} · pH ${Number(state.conditions.ph).toFixed(1)}`;
     $("#chart-sub").textContent =
       `${result.peaks.length} 个组分 · ${gradient ? "梯度" : "等度"} · `
-      + `${mobileNote} · λ ${Math.round(state.conditions.wavelength_nm)} nm · `
+      + `${mobileNote} · ${detectorSummary(state.conditions)} · `
       + `运行 ${fmt(result.metrics.run_time_min, 1)} min`;
   } catch (err) {
     if (err.name === "AbortError") return;

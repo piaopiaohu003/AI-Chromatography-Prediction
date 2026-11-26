@@ -4,6 +4,18 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const chemicalbook = require('../lib/chemicalbook');
 const detector = require('../lib/detector');
+const simulation = require('../lib/simulation');
+const models = require('../lib/models');
+const { COMPOUNDS } = require('../lib/compounds');
+
+const SAMPLE = models.normalizeCompoundList([COMPOUNDS[0]]);
+
+function simulateWith(overrides) {
+  const conditions = models.normalizeConditions(overrides);
+  return simulation.simulate(SAMPLE, conditions);
+}
+
+const signalSum = (result) => result.signal.reduce((sum, value) => sum + Math.abs(value), 0);
 
 const SEARCH_HTML = `
 <table class="mid"><tr><td><table class="mbox">
@@ -134,6 +146,40 @@ test('invalid routes and modes are rejected', () => {
   const badMode = validPayload();
   badMode.mode = 'predict';
   assert.throws(() => detector.validatePayload(badMode), (error) => Boolean(error.fields.mode));
+});
+
+test('detector type defaults to UV and rejects unknown values', () => {
+  assert.equal(models.normalizeConditions({}).detector, 'UV');
+  assert.throws(() => models.normalizeConditions({ detector: 'PDA' }), (error) => error instanceof models.ValidationError);
+});
+
+test('UV response depends on wavelength while RID stays universal', () => {
+  const uvShort = simulateWith({ detector: 'UV', wavelength_nm: 210 });
+  const uvLong = simulateWith({ detector: 'UV', wavelength_nm: 400 });
+  assert.notEqual(signalSum(uvShort), signalSum(uvLong));
+
+  const ridShort = simulateWith({ detector: 'RID', wavelength_nm: 210 });
+  const ridLong = simulateWith({ detector: 'RID', wavelength_nm: 400 });
+  assert.deepEqual(ridShort.signal, ridLong.signal);
+  assert.deepEqual(ridShort.peaks, ridLong.peaks);
+  assert.equal(ridShort.peaks[0].eps_rel, 1);
+  assert.equal(ridShort.metrics.detector, 'RID');
+});
+
+test('detector parameters change the simulated response', () => {
+  const narrow = simulateWith({ detector: 'UV', wavelength_nm: 254, bandwidth_nm: 2 });
+  const wide = simulateWith({ detector: 'UV', wavelength_nm: 254, bandwidth_nm: 40 });
+  assert.notEqual(signalSum(narrow), signalSum(wide));
+
+  const fldExact = simulateWith({ detector: 'FLD', excitation_nm: COMPOUNDS[0].lambda_max_nm });
+  const fldOff = simulateWith({ detector: 'FLD', excitation_nm: 500 });
+  assert.notEqual(signalSum(fldExact), signalSum(fldOff));
+});
+
+test('each detector reports its own advisory warning', () => {
+  assert.ok(simulateWith({ detector: 'RID' }).warnings.some((item) => item.includes('RID')));
+  assert.ok(simulateWith({ detector: 'ELSD' }).warnings.some((item) => item.includes('挥发性缓冲盐')));
+  assert.ok(simulateWith({ detector: 'MS' }).warnings.some((item) => item.includes('MS')));
 });
 
 test('image signatures are verified from base64 payloads', () => {

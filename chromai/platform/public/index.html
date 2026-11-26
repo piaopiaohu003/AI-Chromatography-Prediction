@@ -289,6 +289,22 @@
           </div>
 
           <div class="field">
+            <div class="field-head">
+              <label for="sim-detector">检测器</label>
+              <output id="sim-detector-out">UV / DAD</output>
+            </div>
+            <select id="sim-detector">
+              <option value="UV">UV / DAD（紫外-可见）</option>
+              <option value="FLD">FLD（荧光）</option>
+              <option value="RID">RID（示差折光）</option>
+              <option value="ELSD">ELSD（蒸发光散射）</option>
+              <option value="CAD">CAD（电雾式）</option>
+              <option value="MS">MS（LC-MS / ESI）</option>
+            </select>
+            <div class="detector-params" id="detector-params"></div>
+          </div>
+
+          <div class="field">
             <div class="field-head"><label for="flow">流速</label><output id="flow-out">1.00 mL/min</output></div>
             <input type="range" id="flow" data-key="flow_ml_min" min="0.1" max="3" step="0.05" value="1">
           </div>
@@ -296,11 +312,6 @@
           <div class="field">
             <div class="field-head"><label for="temperature">柱温</label><output id="temperature-out">30 °C</output></div>
             <input type="range" id="temperature" data-key="temperature_c" min="15" max="60" step="1" value="30">
-          </div>
-
-          <div class="field">
-            <div class="field-head"><label for="wavelength">检测波长</label><output id="wavelength-out">254 nm</output></div>
-            <input type="range" id="wavelength" data-key="wavelength_nm" min="190" max="400" step="1" value="254">
           </div>
 
           <div class="field inline-field">

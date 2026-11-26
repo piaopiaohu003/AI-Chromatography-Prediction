@@ -1659,3 +1659,11 @@ input[type="range"]::-moz-range-thumb {
   font-size: 10.5px;
   text-align: left;
 }
+
+.detector-params {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+.detector-params .inline-field { margin: 0; }
+.detector-params select { width: 100%; }
