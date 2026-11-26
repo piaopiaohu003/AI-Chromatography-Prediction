@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="A simulated chromatography workspace with live ChemicalBook compound data, interface detection, and configurable method parameters." />
+    <title>ION — Chromatography Prediction Workspace</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23b8ef72'/%3E%3Cpath d='M8 21V11m5 10V7m6 14V13m5 8V9' stroke='%23131a14' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace">Skip to workspace</a>
+    <svg class="svg-sprite" aria-hidden="true">
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="m9 6 9 6-9 6Z"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v5h14v-5"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v12m0 0 4.5-4.5M12 16l-4.5-4.5M5 20h14"/></symbol>
+      <symbol id="i-reset" viewBox="0 0 24 24"><path d="M5 8V4m0 0h4M5 4l3 3a7 7 0 1 1-2 7"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4.5 4.5L19 7"/></symbol>
+      <symbol id="i-flask" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5 9c-.5 1 .2 2 1.4 2h11.2c1.2 0 1.9-1 1.4-2l-5-9V3M8 14h8"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-8 8M18 13v6H5V6h6"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h3M11 17h9M14 4v6M7 14v6"/></symbol>
+      <symbol id="i-scan" viewBox="0 0 24 24"><path d="M8 4H4v4M16 4h4v4M20 16v4h-4M8 20H4v-4M7 12h10"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></symbol>
+    </svg>
+
+    <header class="app-header">
+      <a class="brand" href="/" aria-label="ION workspace home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span class="brand-word">ION<span>®</span></span>
+      </a>
+      <div class="header-divider"></div>
+      <div class="workspace-path">
+        <span>WORKSPACE</span>
+        <svg class="icon"><use href="#i-chevron"/></svg>
+        <strong>Method 001</strong>
+        <span class="saved-state"><i></i> Local</span>
+      </div>
+      <div class="header-actions">
+        <span class="engine-badge"><i></i> SIMULATION ENGINE</span>
+        <button class="icon-button" id="reset-button" type="button" aria-label="Reset workspace" title="Reset workspace"><svg class="icon"><use href="#i-reset"/></svg></button>
+        <button class="button button-secondary export-button" id="export-button" type="button"><svg class="icon"><use href="#i-download"/></svg>Export method</button>
+      </div>
+    </header>
+
+    <div class="app-layout">
+      <aside class="method-sidebar" aria-label="Method sequence">
+        <div class="sidebar-heading">
+          <div><span class="eyebrow">METHOD SEQUENCE</span><h2>Build your method</h2></div>
+          <span class="module-count">18</span>
+        </div>
+        <nav id="module-list" class="module-list" aria-label="18 method modules"></nav>
+        <section class="module-config" aria-labelledby="config-title">
+          <div class="config-heading"><span class="eyebrow">MODULE CONFIGURATION</span><span id="config-step">18 / 18</span></div>
+          <h3 id="config-title">Simulate</h3>
+          <p id="config-description">Generate a synthetic chromatogram from the active method.</p>
+          <form id="module-config-form"></form>
+        </section>
+        <div class="simulation-disclosure"><svg class="icon"><use href="#i-info"/></svg><p><strong>Predictive environment</strong>All chromatograms and interface detections are simulated.</p></div>
+      </aside>
+
+      <main class="workspace" id="workspace">
+        <div class="workspace-heading">
+          <div>
+            <span class="eyebrow">PREDICTIVE WORKSPACE / RP-HPLC</span>
+            <h1>Chromatographic separation</h1>
+            <p>Configure the instrument. Inspect the chemistry. Predict the separation.</p>
+          </div>
+          <div class="run-controls">
+            <div class="segmented-control" aria-label="Run mode">
+              <button type="button" class="active" data-mode="simulate" aria-pressed="true">Simulate</button>
+              <button type="button" data-mode="analyze" aria-pressed="false">Analyze</button>
+            </div>
+            <button class="button button-primary" id="run-button" type="button"><svg class="icon"><use href="#i-play"/></svg><span>Run simulation</span></button>
+          </div>
+        </div>
+
+        <div class="view-tabs" role="tablist" aria-label="Workspace views">
+          <button type="button" role="tab" aria-selected="true" class="active" data-view="simulation"><svg class="icon"><use href="#i-play"/></svg>Simulation</button>
+          <button type="button" role="tab" aria-selected="false" data-view="detector"><svg class="icon"><use href="#i-scan"/></svg>Interface Detector</button>
+          <button type="button" role="tab" aria-selected="false" data-view="parameters"><svg class="icon"><use href="#i-sliders"/></svg>Parameters</button>
+          <span class="view-status" id="view-status"><i></i> Ready</span>
+        </div>
+
+        <section id="simulation-view" class="view-panel" role="tabpanel">
+          <div class="chart-panel">
+            <div class="panel-heading">
+              <div><span class="eyebrow" id="result-eyebrow">SIMULATED OUTPUT</span><h2 id="result-title">UV chromatogram <span>254 nm</span></h2></div>
+              <div class="chart-legend" id="chart-legend"><span><i class="legend-line"></i>Absorbance</span><span><i class="legend-marker"></i>Detected peak</span></div>
+            </div>
+            <div class="chart-wrap" id="chart-wrap">
+              <svg id="chromatogram" viewBox="0 0 780 310" role="img" aria-label="Simulated chromatogram"></svg>
+              <div class="result-loading" id="result-loading" role="status"><span class="loader"></span><strong>Computing separation</strong><small>Applying method parameters…</small></div>
+              <div class="analysis-canvas" id="analysis-canvas" hidden></div>
+            </div>
+            <div class="chart-axis-label" id="chart-axis-label">Retention time (min)</div>
+          </div>
+
+          <div class="metric-grid" id="metric-grid" aria-live="polite">
+            <div class="metric"><span>Retention time</span><strong data-metric="0">—</strong><small>min</small></div>
+            <div class="metric"><span>Resolution</span><strong data-metric="1">—</strong><small>Rs</small></div>
+            <div class="metric"><span>Detected peaks</span><strong data-metric="2">—</strong><small>peaks</small></div>
+            <div class="metric"><span>Tailing factor</span><strong data-metric="3">—</strong><small>Tf</small></div>
+          </div>
+          <div class="inline-message error-message" id="result-error" role="alert" hidden></div>
+          <div class="peak-table-wrap">
+            <div class="section-row"><h3>Peak assignment</h3><span id="peak-table-caption">Synthetic prediction</span></div>
+            <div class="table-scroll"><table class="peak-table"><thead><tr><th>Peak</th><th>Retention</th><th>Relative area</th><th>Assignment</th></tr></thead><tbody id="peak-table-body"><tr class="empty-row"><td colspan="4">Run a simulation to generate peak assignments.</td></tr></tbody></table></div>
+          </div>
+        </section>
+
+        <section id="detector-view" class="view-panel" role="tabpanel" hidden>
+          <div class="detector-grid">
+            <div class="detector-main">
+              <div class="section-row detector-title"><div><span class="eyebrow">SIMULATED VISION MODULE</span><h2>Interface Detector</h2></div><span class="soft-badge">SIMULATED</span></div>
+              <p class="section-intro">Add an instrument screenshot to simulate component recognition and parameter mapping. No image is required for the combined demo.</p>
+              <label class="drop-zone" id="drop-zone" for="interface-file">
+                <input id="interface-file" type="file" accept="image/png,image/jpeg,image/webp" />
+                <img id="interface-preview" alt="Uploaded instrument interface preview" hidden />
+                <span class="upload-placeholder" id="upload-placeholder"><span class="upload-icon"><svg class="icon"><use href="#i-upload"/></svg></span><strong>Drop an interface screenshot here</strong><span>or <u>browse files</u> · PNG, JPG, WebP · max 5 MB</span></span>
+              </label>
+              <div class="file-status" id="file-status" aria-live="polite">No screenshot attached. Detection will use the simulated combined interface.</div>
+              <fieldset class="route-fieldset"><legend>Interface route</legend><div class="route-options">
+                <label><input type="radio" name="route" value="combined" checked /><span>Combined view<small>All instrument modules</small></span></label>
+                <label><input type="radio" name="route" value="inlet" /><span>Inlet / solvent<small>Flow and gradient</small></span></label>
+                <label><input type="radio" name="route" value="uv_vis" /><span>UV-Vis<small>Detection wavelength</small></span></label>
+                <label><input type="radio" name="route" value="temperature" /><span>Temperature<small>Column thermostat</small></span></label>
+                <label><input type="radio" name="route" value="column" /><span>Column parameters<small>Injection and runtime</small></span></label>
+              </div></fieldset>
+              <button class="button button-primary detector-run" id="detect-button" type="button"><svg class="icon"><use href="#i-scan"/></svg>Detect interface</button>
+            </div>
+            <aside class="combined-preview" aria-label="Combined parameter preview">
+              <div class="section-row"><div><span class="eyebrow">COMBINED VIEW</span><h3>Parameter preview</h3></div><button class="text-button" type="button" data-open-view="parameters">Edit all</button></div>
+              <div id="combined-params" class="combined-params"></div>
+              <div class="detected-output"><span class="eyebrow">DETECTION OUTPUT</span><div id="detected-modules" class="detected-modules"><p class="empty-copy">Run detection to map interface modules.</p></div></div>
+            </aside>
+          </div>
+        </section>
+
+        <section id="parameters-view" class="view-panel" role="tabpanel" hidden>
+          <div class="parameters-heading"><div><span class="eyebrow">METHOD INPUT / SIX REQUIRED FIELDS</span><h2>Parameter configuration</h2><p>Edit the combined method, preview the payload, then apply it to a new simulation.</p></div><button class="button button-secondary" id="defaults-button" type="button"><svg class="icon"><use href="#i-reset"/></svg>Restore defaults</button></div>
+          <div class="parameters-layout">
+            <form id="parameters-form" class="parameters-form" novalidate></form>
+            <div class="parameter-preview-panel"><div class="section-row"><h3>Payload preview</h3><span class="soft-badge">JSON</span></div><pre id="parameter-json"></pre><p>All values are validated again by the backend before a result is generated.</p></div>
+          </div>
+          <div class="parameter-actions"><span id="parameter-form-status" role="status">Six required parameters · values shown with units</span><button class="button button-primary" id="apply-parameters" type="submit" form="parameters-form"><svg class="icon"><use href="#i-check"/></svg>Apply &amp; simulate</button></div>
+        </section>
+      </main>
+
+      <aside class="results-sidebar" aria-label="Compound results">
+        <div class="results-heading"><div><span class="eyebrow">COMPOUND INTELLIGENCE</span><h2>Results</h2></div><span class="source-badge" id="source-badge"><i></i><span>CONNECTING</span></span></div>
+        <form class="compound-search" id="compound-search-form" role="search">
+          <label for="compound-query">Search ChemicalBook</label>
+          <div class="search-control"><svg class="icon"><use href="#i-search"/></svg><input id="compound-query" name="q" type="search" value="aspirin" maxlength="100" autocomplete="off" placeholder="Name or CAS number" required /><button type="submit" aria-label="Search compounds"><svg class="icon"><use href="#i-chevron"/></svg></button></div>
+          <div class="search-meta"><span>Name, synonym, or CAS</span><kbd>↵</kbd></div>
+        </form>
+        <div class="compound-feedback" id="compound-feedback" role="status">Connecting to the live chemical data source…</div>
+
+        <section class="compound-level results-list-section" data-level="1" aria-labelledby="live-results-title">
+          <div class="section-row"><h3 id="live-results-title">Live results</h3><span id="result-count">—</span></div>
+          <div id="compound-results" class="compound-results"><div class="compound-skeleton"></div><div class="compound-skeleton"></div><div class="compound-skeleton"></div></div>
+        </section>
+
+        <section class="compound-level compound-identity" data-level="2" aria-labelledby="identity-title">
+          <div class="level-label"><span>02</span><h3 id="identity-title">Source record</h3></div>
+          <div id="compound-identity"><p class="empty-copy">Select a compound to inspect its source record.</p></div>
+        </section>
+
+        <section class="compound-level" data-level="3" aria-labelledby="properties-title">
+          <div class="level-label"><span>03</span><h3 id="properties-title">Physical properties</h3></div>
+          <dl id="compound-properties" class="property-list"><div class="empty-property"><dt>Properties</dt><dd>Awaiting a source record</dd></div></dl>
+        </section>
+
+        <section class="compound-level compound-summary" data-level="4" aria-labelledby="summary-title">
+          <div class="level-label"><span>04</span><h3 id="summary-title">Chemical property summary</h3></div>
+          <p id="compound-summary" class="empty-copy">No summary loaded.</p>
+          <a id="compound-source-link" class="source-link" href="https://www.chemicalbook.com/" target="_blank" rel="noopener noreferrer">Open ChemicalBook source<svg class="icon"><use href="#i-external"/></svg></a>
+        </section>
+        <footer class="data-note"><svg class="icon"><use href="#i-flask"/></svg><p>Chemical records are retrieved live from ChemicalBook. Chromatography predictions are synthetic and not for laboratory use.</p></footer>
+      </aside>
+    </div>
+    <div class="toast" id="toast" role="status" hidden></div>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
