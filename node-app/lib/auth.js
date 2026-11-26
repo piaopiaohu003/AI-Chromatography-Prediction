@@ -136,7 +136,7 @@ function normalizePreferences(patch) {
   const organic = options.includes(patch.default_organic)
     ? patch.default_organic
     : options[0];
-  const detector = ['UV', 'MS'].includes(patch.default_detector)
+  const detector = ['UV', 'FLD', 'RID', 'ELSD', 'MS'].includes(patch.default_detector)
     ? patch.default_detector
     : DEFAULT_PREFERENCES.default_detector;
   let temperature = Number(patch.default_temperature_c);

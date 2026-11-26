@@ -19,6 +19,8 @@ from .models import (
     IdentifyRequest,
     LiteratureWatchRequest,
     PasswordChangeRequest,
+    PasswordResetConfirm,
+    PasswordResetRequest,
     PreferencesPayload,
     RecommendRequest,
     SimulateRequest,
@@ -103,11 +105,28 @@ def health() -> dict:
 @app.post("/api/auth/register")
 def auth_register(payload: AuthRequest, request: Request, response: Response) -> dict:
     try:
-        user, token = auth.register(payload.username, payload.password)
+        user, token = auth.register(payload.username, payload.email, payload.password)
     except auth.AuthError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.message) from exc
     _set_session_cookie(request, response, token, auth.SESSION_TTL_SECONDS)
     return {"user": user}
+
+
+@app.post("/api/auth/password-reset/request")
+def auth_password_reset_request(payload: PasswordResetRequest) -> dict:
+    try:
+        return auth.request_password_reset(payload.email)
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+
+
+@app.post("/api/auth/password-reset/confirm")
+def auth_password_reset_confirm(payload: PasswordResetConfirm) -> dict:
+    try:
+        auth.reset_password(payload.token, payload.new_password)
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+    return {"ok": True}
 
 
 @app.post("/api/auth/login")

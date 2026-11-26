@@ -182,14 +182,46 @@ async function handleApi(req, res, pathname) {
       throw new models.ValidationError('请求体必须是 JSON 对象');
     }
     try {
-      const action = pathname === '/api/auth/register' ? auth.register : auth.login;
-      const { user, token } = await action(body.username, body.password);
+      const { user, token } = await (pathname === '/api/auth/register'
+        ? auth.register(body.username, body.email, body.password)
+        : auth.login(body.username, body.password));
       return sendJson(
         res,
         200,
         { user },
         { 'Set-Cookie': sessionCookie(req, token, auth.SESSION_TTL_SECONDS) },
       );
+    } catch (err) {
+      if (err instanceof auth.AuthError) {
+        return sendError(res, err.status, err.message);
+      }
+      throw err;
+    }
+  }
+
+  if (pathname === '/api/auth/password-reset/request') {
+    if (method !== 'POST') {
+      return sendError(res, 405, 'Method Not Allowed');
+    }
+    const body = await readJsonBody(req);
+    try {
+      return sendJson(res, 200, await auth.requestPasswordReset(body.email));
+    } catch (err) {
+      if (err instanceof auth.AuthError) {
+        return sendError(res, err.status, err.message);
+      }
+      throw err;
+    }
+  }
+
+  if (pathname === '/api/auth/password-reset/confirm') {
+    if (method !== 'POST') {
+      return sendError(res, 405, 'Method Not Allowed');
+    }
+    const body = await readJsonBody(req);
+    try {
+      await auth.resetPassword(body.token, body.new_password);
+      return sendJson(res, 200, { ok: true });
     } catch (err) {
       if (err instanceof auth.AuthError) {
         return sendError(res, err.status, err.message);

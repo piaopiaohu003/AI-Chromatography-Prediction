@@ -30,7 +30,20 @@ export HOST=0.0.0.0 PORT=8000
 
 任何兼容 `/chat/completions` 的服务均可使用（OpenAI、DeepSeek、Moonshot、通义千问兼容模式、本地 vLLM/Ollama 网关等）。
 
-账号数据保存为 JSON 文件，路径由 `CHROM_USER_DB` 指定，缺省位于系统临时目录。部署实例的临时目录可能在重新部署后重置，此时需要重新注册。
+账号数据默认保存为 JSON 文件，路径由 `CHROM_USER_DB` 指定，缺省位于系统临时目录。设置下列任一 Redis 变量后自动切换为 Redis 持久化（单键 `chromai:v1:db` 保存整个账户库），探测失败时回退到文件存储：
+
+```bash
+export REDIS_URL=redis://:password@host:6379/0   # 或分别指定
+export REDIS_HOST=127.0.0.1 REDIS_PORT=6379 REDIS_PASSWORD= REDIS_DB=0 REDIS_TLS=0
+export CHROM_REDIS_KEY_PREFIX=chromai             # 可选，修改 Redis 键前缀
+```
+
+注册时需填写邮箱，可用于密码找回。若配置了 SMTP，重置令牌会通过邮件送达；未配置时接口会返回 `debug_token` 并在服务端日志中打印，便于本地调试：
+
+```bash
+export CHROM_SMTP_URL=smtps://user:password@smtp.example.com:465
+export CHROM_MAIL_FROM=no-reply@example.com       # 可选，默认取 SMTP 用户名
+```
 
 ### Node.js 运行（线上部署版本）
 

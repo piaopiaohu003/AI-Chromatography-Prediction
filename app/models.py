@@ -90,7 +90,7 @@ class SimulateRequest(BaseModel):
 
 
 class RecommendConstraints(BaseModel):
-    detector: Literal["UV", "MS"] = "UV"
+    detector: Literal["UV", "FLD", "RID", "ELSD", "MS"] = "UV"
     phase: Literal["auto", "reversed", "normal"] = "auto"
     organic: Literal["auto", "ACN", "MeOH", "IPA", "EtOAc"] = "auto"
     mode: Literal["auto", "isocratic", "gradient"] = "auto"
@@ -99,7 +99,17 @@ class RecommendConstraints(BaseModel):
 
 class AuthRequest(BaseModel):
     username: str
+    email: str = ""
     password: str
+
+
+class PasswordResetRequest(BaseModel):
+    email: str
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str
 
 
 class AIOverride(BaseModel):

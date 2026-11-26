@@ -110,20 +110,21 @@ function numberOr(value, defaultValue, low, high) {
 }
 
 function bufferFor(ph, detector) {
-  if (detector === 'MS') {
+  if (detector === 'MS' || detector === 'ELSD') {
+    // Both detectors require volatile buffers (no involatile phosphate).
     if (ph <= 3.0) {
-      return '0.1% 甲酸水溶液（pH≈2.5，MS 兼容）';
+      return '0.1% 甲酸水溶液（pH≈2.5，挥发性缓冲盐，MS/ELSD 兼容）';
     }
     if (ph <= 5.5) {
-      return '5 mM 甲酸铵缓冲液（pH≈4.5，MS 兼容）';
+      return '5 mM 甲酸铵缓冲液（pH≈4.5，挥发性缓冲盐，MS/ELSD 兼容）';
     }
     if (ph <= 7.5) {
-      return '10 mM 乙酸铵缓冲液（pH≈6.8，MS 兼容）';
+      return '10 mM 乙酸铵缓冲液（pH≈6.8，挥发性缓冲盐，MS/ELSD 兼容）';
     }
     if (ph <= 10.0) {
-      return '10 mM 碳酸氢铵（pH≈9.0，MS 兼容，需耐碱柱）';
+      return '10 mM 碳酸氢铵（pH≈9.0，挥发性，需耐碱柱）';
     }
-    return '5 mM 碳酸铵/氨水（pH≈10.2，MS 兼容，需耐碱柱）';
+    return '5 mM 碳酸铵/氨水（pH≈10.2，挥发性，需耐碱柱）';
   }
   if (ph <= 2.8) {
     return '0.1% 甲酸水溶液（pH≈2.5）';
@@ -161,7 +162,7 @@ function choosePh(compounds, detector) {
     if (ph < 2.8) {
       score -= 0.02 * Math.abs(ph - 2.5);
     }
-    if (detector === 'MS' && ph > 8.5) {
+    if ((detector === 'MS' || detector === 'ELSD') && ph > 8.5) {
       score -= 0.1;
     }
     if (score > bestScore + 1e-9) {
@@ -690,6 +691,84 @@ function rationalityMetricPush(rationale, result) {
   );
 }
 
+const DETECTOR_LABELS = {
+  UV: '紫外/二极管阵列检测器（UV/DAD）',
+  FLD: '荧光检测器（FLD）',
+  RID: '示差折光检测器（RID）',
+  ELSD: '蒸发光散射检测器（ELSD）',
+  MS: '液相色谱-质谱联用（LC-MS / ESI）',
+};
+
+function detectorParams(detector, wavelength, temperatureC) {
+  const label = DETECTOR_LABELS[detector] || DETECTOR_LABELS.UV;
+  let parameters = [];
+  const notes = [];
+
+  if (detector === 'FLD') {
+    parameters = [
+      { label: '激发波长 Ex', value: `${wavelength.toFixed(0)} nm` },
+      { label: '发射波长 Em', value: `${(wavelength + 40).toFixed(0)} nm` },
+      { label: '激发/发射带宽', value: '10 nm / 10 nm' },
+      { label: '光电倍增管增益', value: '中（可调）' },
+    ];
+    notes.push('仅对具天然荧光或可衍生化的组分有响应，无荧光物质需改用其他检测器。');
+  } else if (detector === 'RID') {
+    parameters = [
+      { label: '检测池温度', value: `${temperatureC.toFixed(0)} °C` },
+      { label: '灵敏度', value: '中' },
+      { label: '参比池', value: '流动相冲洗平衡' },
+    ];
+    notes.push('折光检测对流动相组成与温度极敏感，建议采用等度洗脱并将柱温稳定在 ±0.1 °C。');
+  } else if (detector === 'ELSD') {
+    parameters = [
+      { label: '漂移管温度', value: '60 °C' },
+      { label: '雾化器温度', value: '30 °C' },
+      { label: '载气流量', value: '1.5 L/min' },
+      { label: '增益', value: '中' },
+    ];
+    notes.push('必须使用挥发性缓冲盐（甲酸/甲酸铵/乙酸铵），禁用磷酸盐等不挥发性盐。');
+  } else if (detector === 'MS') {
+    parameters = [
+      { label: '离子源', value: 'ESI（可切换 APCI）' },
+      { label: '极性', value: '正/负离子切换' },
+      { label: '毛细管电压', value: '3.5 kV' },
+      { label: '去溶剂温度', value: '350 °C' },
+    ];
+    notes.push('流动相须使用挥发性缓冲盐；建议小内径柱与低流速以匹配 MS 进样量。');
+  } else {
+    parameters = [
+      { label: '检测波长', value: `${wavelength.toFixed(0)} nm` },
+      { label: '带宽', value: '4 nm' },
+      { label: '参比波长', value: '360 nm（或关闭）' },
+    ];
+    notes.push('适用于具共轭发色团的组分；糖类、脂类等无紫外吸收物质灵敏度较低。');
+  }
+
+  return { type: detector, label, parameters, notes };
+}
+
+function attachDetector(result, constraints) {
+  const conditions = result.conditions || {};
+  const wavelength = Number(conditions.wavelength_nm) || 254.0;
+  const temperatureC = Number(conditions.temperature_c) || 30.0;
+  const info = detectorParams(constraints.detector, wavelength, temperatureC);
+  result.detector = info;
+
+  const summary = info.parameters.map((p) => `${p.label} ${p.value}`).join('；');
+  if (!Array.isArray(result.rationale)) result.rationale = [];
+  result.rationale.push(`检测器：${info.label}；${summary}。`);
+
+  if (!Array.isArray(result.risks)) result.risks = [];
+  const warnings = result.result && Array.isArray(result.result.warnings)
+    ? result.result.warnings
+    : null;
+  for (const note of info.notes) {
+    if (!result.risks.includes(note)) result.risks.push(note);
+    if (warnings && !warnings.includes(note)) warnings.push(note);
+  }
+  return result;
+}
+
 function buildMethod(conditions, column, bufferText) {
   const isNormal = conditions.phase === 'normal';
   const chemistry = CHEMISTRY_LABELS[conditions.column.chemistry] || 'C18';
@@ -994,19 +1073,19 @@ async function recommend(compounds, constraints, override) {
       if (aiQuality < 0 || (aiQuality < 1.2 && ruleQuality > aiQuality + 0.25)) {
         ruleResult.llm_error = '大模型方案经物理模型复核存在未洗脱组分或分离度不足，'
           + '已自动改用规则专家系统方案。';
-        return ruleResult;
+        return attachDetector(ruleResult, constraints);
       }
-      return aiResult;
+      return attachDetector(aiResult, constraints);
     } catch (exc) {
       const ruleResult = ruleConditions(compounds, constraints);
       ruleResult.llm_error = `大模型调用失败，已使用规则专家系统：${exc.message || exc}`;
-      return ruleResult;
+      return attachDetector(ruleResult, constraints);
     }
   }
 
   const ruleResult = ruleConditions(compounds, constraints);
   ruleResult.llm_error = null;
-  return ruleResult;
+  return attachDetector(ruleResult, constraints);
 }
 
 module.exports = {
@@ -1016,6 +1095,7 @@ module.exports = {
   choosePh,
   chooseWavelength,
   columnFor,
+  detectorParams,
   ruleConditions,
   aiConditions,
   coerceAiConditions,

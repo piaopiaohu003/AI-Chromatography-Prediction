@@ -66,6 +66,7 @@ class Resp2Client {
     this.connectTimeoutMs = Number(opts.connectTimeoutMs) || 1500;
     this.commandTimeoutMs = Number(opts.commandTimeoutMs) || 3000;
     this.socket = null;
+    this._buf = Buffer.alloc(0);
   }
 
   static parseUrl(url) {
@@ -89,12 +90,21 @@ class Resp2Client {
     const lib = this.tls ? require('tls') : require('net');
     const socket = await new Promise((resolve, reject) => {
       const s = lib.connect({ host: this.host, port: this.port, timeout: this.connectTimeoutMs });
-      s.once('connect', () => resolve(s));
-      s.once('error', (e) => reject(e));
-      s.once('timeout', () => { s.destroy(new Error('connect timeout')); });
+      const onConnect = () => { cleanup(); resolve(s); };
+      const onError = (e) => { cleanup(); reject(e); };
+      const onTimeout = () => { cleanup(); s.destroy(new Error('connect timeout')); };
+      const cleanup = () => {
+        s.off('connect', onConnect);
+        s.off('error', onError);
+        s.off('timeout', onTimeout);
+      };
+      s.once('connect', onConnect);
+      s.once('error', onError);
+      s.once('timeout', onTimeout);
     });
-    socket.setTimeout(this.commandTimeoutMs);
+    socket.setTimeout(0);
     this.socket = socket;
+    this._buf = Buffer.alloc(0);
     if (this.password) await this._raw(['AUTH', this.password]);
     if (this.db) await this._raw(['SELECT', String(this.db)]);
   }
@@ -106,6 +116,7 @@ class Resp2Client {
 
   async close() {
     if (this.socket) { try { this.socket.destroy(); } catch {} ; this.socket = null; }
+    this._buf = Buffer.alloc(0);
   }
 
   async _raw(args) {
@@ -137,41 +148,43 @@ class Resp2Client {
     throw new Error(`unknown RESP prefix: ${type}`);
   }
 
+  _fill() {
+    return new Promise((resolve, reject) => {
+      const socket = this.socket;
+      if (!socket || socket.destroyed) return reject(new Error('socket closed'));
+      const onData = (chunk) => { cleanup(); resolve(chunk); };
+      const onError = (e) => { cleanup(); reject(e); };
+      const onClose = () => { cleanup(); reject(new Error('socket closed')); };
+      const cleanup = () => {
+        socket.off('data', onData);
+        socket.off('error', onError);
+        socket.off('close', onClose);
+      };
+      socket.once('data', onData);
+      socket.once('error', onError);
+      socket.once('close', onClose);
+    });
+  }
+
   async _readLine() {
-    let buf = Buffer.alloc(0);
     while (true) {
-      const chunk = await new Promise((resolve, reject) => {
-        if (!this.socket || this.socket.destroyed) return reject(new Error('socket closed'));
-        const onData = (c) => {
-          this.socket.off('error', onError);
-          resolve(c);
-        };
-        const onError = (e) => { this.socket.off('data', onData); reject(e); };
-        this.socket.once('data', onData);
-        this.socket.once('error', onError);
-      });
-      buf = Buffer.concat([buf, chunk]);
-      const idx = buf.indexOf('\r\n');
-      if (idx >= 0) return buf.slice(0, idx).toString('utf8');
+      const idx = this._buf.indexOf('\r\n');
+      if (idx >= 0) {
+        const line = this._buf.slice(0, idx).toString('utf8');
+        this._buf = this._buf.slice(idx + 2);
+        return line;
+      }
+      this._buf = Buffer.concat([this._buf, await this._fill()]);
     }
   }
 
   async _readExactly(n) {
-    let buf = Buffer.alloc(0);
-    while (buf.length < n) {
-      const chunk = await new Promise((resolve, reject) => {
-        if (!this.socket || this.socket.destroyed) return reject(new Error('socket closed'));
-        const onData = (c) => {
-          this.socket.off('error', onError);
-          resolve(c);
-        };
-        const onError = (e) => { this.socket.off('data', onData); reject(e); };
-        this.socket.once('data', onData);
-        this.socket.once('error', onError);
-      });
-      buf = Buffer.concat([buf, chunk]);
+    while (this._buf.length < n) {
+      this._buf = Buffer.concat([this._buf, await this._fill()]);
     }
-    return buf.slice(0, n);
+    const out = this._buf.slice(0, n);
+    this._buf = this._buf.slice(n);
+    return out;
   }
 }
 

@@ -434,6 +434,96 @@ function bindAuth() {
   $("#auth-form").addEventListener("submit", submitAuth);
   $("#btn-logout").addEventListener("click", logout);
   $("#btn-account").addEventListener("click", openAccount);
+  const forgot = $("#btn-forgot");
+  if (forgot) {
+    forgot.addEventListener("click", (event) => {
+      event.preventDefault();
+      const panel = $("#auth-reset");
+      if (panel) panel.classList.toggle("hidden");
+    });
+  }
+  const requestBtn = $("#btn-reset-request");
+  if (requestBtn) requestBtn.addEventListener("click", requestPasswordReset);
+  const confirmBtn = $("#btn-reset-confirm");
+  if (confirmBtn) confirmBtn.addEventListener("click", confirmPasswordReset);
+}
+
+function setResetMessage(message, isError) {
+  const node = $("#reset-msg");
+  if (!node) return;
+  node.textContent = message || "";
+  node.classList.toggle("hidden", !message);
+  node.style.color = isError ? "" : "var(--teal-dim)";
+}
+
+async function requestPasswordReset() {
+  const email = ($("#reset-email")?.value || "").trim();
+  if (!email) {
+    setResetMessage("请输入注册邮箱", true);
+    return;
+  }
+  const button = $("#btn-reset-request");
+  if (button) button.disabled = true;
+  setResetMessage("正在发送…", false);
+  try {
+    const res = await fetch("/api/auth/password-reset/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    let data = {};
+    try { data = await res.json(); } catch (_) { /* ignore */ }
+    if (!res.ok) {
+      throw new Error(typeof data.detail === "string" ? data.detail : "发送失败，请稍后重试");
+    }
+    if (data.debug_token) {
+      const tokenInput = $("#reset-token");
+      if (tokenInput) tokenInput.value = data.debug_token;
+      setResetMessage("邮件服务未配置，已自动填入重置令牌（生产环境请配置 SMTP）。", false);
+    } else {
+      setResetMessage("重置令牌已发送至邮箱，请在 30 分钟内完成重置。", false);
+    }
+  } catch (err) {
+    setResetMessage(err.message, true);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function confirmPasswordReset() {
+  const token = ($("#reset-token")?.value || "").trim();
+  const password = $("#reset-password")?.value || "";
+  if (!token) {
+    setResetMessage("请输入重置令牌", true);
+    return;
+  }
+  if (password.length < 8 || password.length > 64) {
+    setResetMessage("新密码长度需为 8–64 位", true);
+    return;
+  }
+  const button = $("#btn-reset-confirm");
+  if (button) button.disabled = true;
+  setResetMessage("正在重置…", false);
+  try {
+    const res = await fetch("/api/auth/password-reset/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, new_password: password }),
+    });
+    let data = {};
+    try { data = await res.json(); } catch (_) { /* ignore */ }
+    if (!res.ok) {
+      throw new Error(typeof data.detail === "string" ? data.detail : "重置失败，请稍后重试");
+    }
+    setResetMessage("密码已重置，请使用新密码登录。", false);
+    $("#reset-token").value = "";
+    $("#reset-password").value = "";
+    setAuthMode("login");
+  } catch (err) {
+    setResetMessage(err.message, true);
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 function setAuthMode(mode) {
@@ -443,6 +533,10 @@ function setAuthMode(mode) {
     button.classList.toggle("active", button.dataset.authTab === authMode);
   });
   $("#auth-confirm-field").classList.toggle("hidden", !register);
+  const emailField = $("#auth-email-field");
+  if (emailField) emailField.classList.toggle("hidden", !register);
+  const emailInput = $("#auth-email");
+  if (emailInput) emailInput.required = register;
   $("#auth-password").autocomplete = register ? "new-password" : "current-password";
   $("#auth-submit").textContent = register ? "注册并登录" : "登录";
   hideAuthError();
@@ -493,10 +587,15 @@ async function submitAuth(event) {
   if (authBusy) return;
   hideAuthError();
   const username = $("#auth-username").value.trim();
+  const email = ($("#auth-email")?.value || "").trim();
   const password = $("#auth-password").value;
   const confirm = $("#auth-confirm").value;
   if (!username || !password) {
     showAuthError("请输入用户名和密码");
+    return;
+  }
+  if (authMode === "register" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    showAuthError("请输入有效的邮箱地址");
     return;
   }
   if (authMode === "register" && password !== confirm) {
@@ -511,7 +610,7 @@ async function submitAuth(event) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, email, password }),
     });
     let data = {};
     try { data = await res.json(); } catch (_) { /* ignore */ }
@@ -801,7 +900,10 @@ function applyPreferences(preferences, { silent = false } = {}) {
   if (!allowedChemistry.includes(state.conditions.column.chemistry)) {
     state.conditions.column.chemistry = phase === "normal" ? "silica" : "c18";
   }
-  state.aiConstraints.detector = preferences.default_detector === "MS" ? "MS" : "UV";
+  const detectors = ["UV", "FLD", "RID", "ELSD", "MS"];
+  state.aiConstraints.detector = detectors.includes(preferences.default_detector)
+    ? preferences.default_detector
+    : "UV";
   syncControls();
   persist();
   scheduleSim(0);
@@ -2464,6 +2566,19 @@ function renderAIResult(result) {
     ? warningList.map((text) => warningItem(text)).join("")
     : warningItem("未发现明显风险。", "ok");
 
+  const detector = result.detector && Array.isArray(result.detector.parameters)
+    ? result.detector
+    : null;
+  const detectorBlock = detector
+    ? `<div class="section-title">检测器关键参数 · ${escapeHtml(detector.label)}</div>
+      <div class="method-grid">
+        ${detector.parameters.map((p) =>
+          `<div class="method-cell"><span>${escapeHtml(p.label)}</span><b class="mono">${escapeHtml(p.value)}</b></div>`
+        ).join("")}
+      </div>`
+    : "";
+  const wavelengthLabel = detector && detector.type !== "UV" ? "检测波长（参考）" : "检测波长";
+
   const errorHtml = result.llm_error
     ? `<div class="llm-error">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
@@ -2489,10 +2604,12 @@ function renderAIResult(result) {
         <div class="method-cell"><span>pH</span><b class="mono">${fmt(conditions.ph, 1)}</b></div>
         <div class="method-cell"><span>流速</span><b class="mono">${fmt(conditions.flow_ml_min, 2)} mL/min</b></div>
         <div class="method-cell"><span>柱温</span><b class="mono">${fmt(conditions.temperature_c, 0)} °C</b></div>
-        <div class="method-cell"><span>检测波长</span><b class="mono">${fmt(conditions.wavelength_nm, 0)} nm</b></div>
+        <div class="method-cell"><span>${wavelengthLabel}</span><b class="mono">${fmt(conditions.wavelength_nm, 0)} nm</b></div>
         <div class="method-cell"><span>进样量</span><b class="mono">${fmt(conditions.injection_volume_ul, 1)} µL</b></div>
         <div class="method-cell"><span>运行时间</span><b class="mono">${fmt(metrics.run_time_min, 1)} min</b></div>
       </div>
+
+      ${detectorBlock}
 
       <div class="section-title">梯度程序</div>
       ${gradientBlock}

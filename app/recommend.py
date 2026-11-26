@@ -115,16 +115,17 @@ def _number(value, default: float, low: float, high: float) -> float:
 
 
 def _buffer_for(ph: float, detector: str) -> str:
-    if detector == "MS":
+    if detector in ("MS", "ELSD"):
+        # Both detectors require volatile buffers (no involatile phosphate).
         if ph <= 3.0:
-            return "0.1% 甲酸水溶液（pH≈2.5，MS 兼容）"
+            return "0.1% 甲酸水溶液（pH≈2.5，挥发性缓冲盐，MS/ELSD 兼容）"
         if ph <= 5.5:
-            return "5 mM 甲酸铵缓冲液（pH≈4.5，MS 兼容）"
+            return "5 mM 甲酸铵缓冲液（pH≈4.5，挥发性缓冲盐，MS/ELSD 兼容）"
         if ph <= 7.5:
-            return "10 mM 乙酸铵缓冲液（pH≈6.8，MS 兼容）"
+            return "10 mM 乙酸铵缓冲液（pH≈6.8，挥发性缓冲盐，MS/ELSD 兼容）"
         if ph <= 10.0:
-            return "10 mM 碳酸氢铵（pH≈9.0，MS 兼容，需耐碱柱）"
-        return "5 mM 碳酸铵/氨水（pH≈10.2，MS 兼容，需耐碱柱）"
+            return "10 mM 碳酸氢铵（pH≈9.0，挥发性，需耐碱柱）"
+        return "5 mM 碳酸铵/氨水（pH≈10.2，挥发性，需耐碱柱）"
     if ph <= 2.8:
         return "0.1% 甲酸水溶液（pH≈2.5）"
     if ph <= 4.0:
@@ -152,7 +153,7 @@ def _choose_ph(compounds: List[Compound], detector: str) -> Tuple[float, List[st
             score -= 0.08
         if ph < 2.8:
             score -= 0.02 * abs(ph - 2.5)
-        if detector == "MS" and ph > 8.5:
+        if detector in ("MS", "ELSD") and ph > 8.5:
             score -= 0.1
         if score > best_score + 1e-9:
             best_score = score
@@ -250,6 +251,85 @@ def _column_for(detector: str, compound_count: int, phase: str = "reversed") -> 
         "chemistry": "c18",
         "label": f"C18, {int(length)} × 4.6 mm, 5 µm",
     }
+
+
+DETECTOR_LABELS = {
+    "UV": "紫外/二极管阵列检测器（UV/DAD）",
+    "FLD": "荧光检测器（FLD）",
+    "RID": "示差折光检测器（RID）",
+    "ELSD": "蒸发光散射检测器（ELSD）",
+    "MS": "液相色谱-质谱联用（LC-MS / ESI）",
+}
+
+
+def _detector_params(detector: str, wavelength: float, temperature_c: float) -> Dict:
+    """Return the recommended key parameters for a detector type."""
+
+    label = DETECTOR_LABELS.get(detector, DETECTOR_LABELS["UV"])
+    parameters: List[Dict[str, str]] = []
+    notes: List[str] = []
+
+    if detector == "UV":
+        parameters = [
+            {"label": "检测波长", "value": f"{wavelength:.0f} nm"},
+            {"label": "带宽", "value": "4 nm"},
+            {"label": "参比波长", "value": "360 nm（或关闭）"},
+        ]
+        notes.append("适用于具共轭发色团的组分；糖类、脂类等无紫外吸收物质灵敏度较低。")
+    elif detector == "FLD":
+        parameters = [
+            {"label": "激发波长 Ex", "value": f"{wavelength:.0f} nm"},
+            {"label": "发射波长 Em", "value": f"{wavelength + 40:.0f} nm"},
+            {"label": "激发/发射带宽", "value": "10 nm / 10 nm"},
+            {"label": "光电倍增管增益", "value": "中（可调）"},
+        ]
+        notes.append("仅对具天然荧光或可衍生化的组分有响应，无荧光物质需改用其他检测器。")
+    elif detector == "RID":
+        parameters = [
+            {"label": "检测池温度", "value": f"{temperature_c:.0f} °C"},
+            {"label": "灵敏度", "value": "中"},
+            {"label": "参比池", "value": "流动相冲洗平衡"},
+        ]
+        notes.append("折光检测对流动相组成与温度极敏感，建议采用等度洗脱并将柱温稳定在 ±0.1 °C。")
+    elif detector == "ELSD":
+        parameters = [
+            {"label": "漂移管温度", "value": "60 °C"},
+            {"label": "雾化器温度", "value": "30 °C"},
+            {"label": "载气流量", "value": "1.5 L/min"},
+            {"label": "增益", "value": "中"},
+        ]
+        notes.append("必须使用挥发性缓冲盐（甲酸/甲酸铵/乙酸铵），禁用磷酸盐等不挥发性盐。")
+    elif detector == "MS":
+        parameters = [
+            {"label": "离子源", "value": "ESI（可切换 APCI）"},
+            {"label": "极性", "value": "正/负离子切换"},
+            {"label": "毛细管电压", "value": "3.5 kV"},
+            {"label": "去溶剂温度", "value": "350 °C"},
+        ]
+        notes.append("流动相须使用挥发性缓冲盐；建议小内径柱与低流速以匹配 MS 进样量。")
+
+    return {"type": detector, "label": label, "parameters": parameters, "notes": notes}
+
+
+def _attach_detector(result: Dict, constraints: RecommendConstraints) -> Dict:
+    """Attach detector key parameters plus rationale/risk notes to a result."""
+
+    conditions = result.get("conditions") or {}
+    wavelength = float(conditions.get("wavelength_nm") or 254.0)
+    temperature = float(conditions.get("temperature_c") or 30.0)
+    info = _detector_params(constraints.detector, wavelength, temperature)
+    result["detector"] = info
+
+    summary = "；".join(f"{p['label']} {p['value']}" for p in info["parameters"])
+    result.setdefault("rationale", []).append(f"检测器：{info['label']}；{summary}。")
+
+    warnings = (result.get("result") or {}).get("warnings")
+    for note in info["notes"]:
+        if note not in result.setdefault("risks", []):
+            result["risks"].append(note)
+        if isinstance(warnings, list) and note not in warnings:
+            warnings.append(note)
+    return result
 
 
 def _build_conditions(
@@ -925,14 +1005,14 @@ def recommend(
                     "大模型方案经物理模型复核存在未洗脱组分或分离度不足，"
                     "已自动改用规则专家系统方案。"
                 )
-                return rule_result
-            return ai_result
+                return _attach_detector(rule_result, constraints)
+            return _attach_detector(ai_result, constraints)
         except Exception as exc:  # noqa: BLE001 - fall back to deterministic engine
             rule_result = _rule_conditions(compounds, constraints)
             rule_result["llm_error"] = f"大模型调用失败，已使用规则专家系统：{exc}"
-            return rule_result
+            return _attach_detector(rule_result, constraints)
 
     rule_result = _rule_conditions(compounds, constraints)
     if not config["configured"]:
         rule_result["llm_error"] = None
-    return rule_result
+    return _attach_detector(rule_result, constraints)

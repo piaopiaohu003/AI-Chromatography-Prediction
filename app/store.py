@@ -92,6 +92,7 @@ class _TinyRedis:
         self.connect_timeout = connect_timeout
         self.command_timeout = command_timeout
         self._sock: socket.socket | None = None
+        self._buf = b""
 
     @classmethod
     def parse_url(cls, url: str) -> dict[str, Any]:
@@ -123,6 +124,7 @@ class _TinyRedis:
             s = ctx.wrap_socket(s, server_hostname=self.host)
         s.settimeout(self.command_timeout)
         self._sock = s
+        self._buf = b""
         if self.password:
             self._raw(["AUTH", self.password])
         if self.db:
@@ -135,6 +137,7 @@ class _TinyRedis:
             except OSError:
                 pass
             self._sock = None
+        self._buf = b""
 
     def command(self, *args: str) -> Any:
         self.connect()
@@ -155,28 +158,25 @@ class _TinyRedis:
 
     def _recv_exact(self, n: int) -> bytes:
         assert self._sock is not None
-        buf = b""
-        while len(buf) < n:
-            chunk = self._sock.recv(n - len(buf))
+        while len(self._buf) < n:
+            chunk = self._sock.recv(max(4096, n - len(self._buf)))
             if not chunk:
                 raise ConnectionError("redis socket closed")
-            buf += chunk
-        return buf
+            self._buf += chunk
+        out, self._buf = self._buf[:n], self._buf[n:]
+        return out
 
     def _read_line(self) -> bytes:
-        assert self._sock is not None
-        buf = b""
         while True:
-            # Peek first
-            try:
-                idx = buf.index(b"\r\n")
-                return buf[:idx]
-            except ValueError:
-                pass
+            idx = self._buf.find(b"\r\n")
+            if idx >= 0:
+                line, self._buf = self._buf[:idx], self._buf[idx + 2:]
+                return line
+            assert self._sock is not None
             chunk = self._sock.recv(4096)
             if not chunk:
                 raise ConnectionError("redis socket closed")
-            buf += chunk
+            self._buf += chunk
 
     def _read_reply(self) -> Any:
         line = self._read_line()

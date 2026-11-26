@@ -33,6 +33,10 @@
           <span>用户名</span>
           <input id="auth-username" name="username" maxlength="24" autocomplete="username" required>
         </label>
+        <label class="auth-field hidden" id="auth-email-field">
+          <span>邮箱</span>
+          <input id="auth-email" name="email" type="email" maxlength="254" autocomplete="email" placeholder="用于找回密码">
+        </label>
         <label class="auth-field">
           <span>密码</span>
           <input id="auth-password" name="password" type="password" maxlength="64" autocomplete="current-password" required>
@@ -45,7 +49,27 @@
         <button type="submit" class="primary-btn" id="auth-submit">登录</button>
       </form>
 
-      <p class="auth-hint">账号数据保存在服务器运行实例中，重新部署后需要重新注册。</p>
+      <p class="auth-hint"><a href="#" id="btn-forgot">忘记密码？</a></p>
+
+      <form class="auth-field-group hidden" id="auth-reset">
+        <label class="auth-field">
+          <span>注册邮箱</span>
+          <input id="reset-email" type="email" maxlength="254" placeholder="name@example.com">
+        </label>
+        <button type="button" class="ghost-btn" id="btn-reset-request">发送重置令牌</button>
+        <label class="auth-field">
+          <span>重置令牌</span>
+          <input id="reset-token" type="text" maxlength="96" placeholder="邮件中的令牌">
+        </label>
+        <label class="auth-field">
+          <span>新密码</span>
+          <input id="reset-password" type="password" maxlength="64" autocomplete="new-password">
+        </label>
+        <p class="auth-error hidden" id="reset-msg"></p>
+        <button type="button" class="primary-btn" id="btn-reset-confirm">重置密码</button>
+      </form>
+
+      <p class="auth-hint">账号与偏好持久化存储，重新部署后仍可继续登录。</p>
     </div>
   </div>
 
@@ -379,6 +403,9 @@
             <div class="field-head"><label>检测器</label></div>
             <div class="segmented" id="seg-detector">
               <button data-value="UV">UV / DAD</button>
+              <button data-value="FLD">荧光</button>
+              <button data-value="RID">示差</button>
+              <button data-value="ELSD">蒸发光</button>
               <button data-value="MS">LC-MS</button>
             </div>
           </div>
@@ -581,6 +608,9 @@
             <div class="field-head"><label>默认检测器</label></div>
             <div class="segmented" id="pref-detector">
               <button data-value="UV">UV / DAD</button>
+              <button data-value="FLD">荧光</button>
+              <button data-value="RID">示差</button>
+              <button data-value="ELSD">蒸发光</button>
               <button data-value="MS">LC-MS</button>
             </div>
           </div>

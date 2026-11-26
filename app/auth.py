@@ -18,9 +18,12 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from .store import load_store, save_store
+from .mailer import send_mail
 
 COOKIE_NAME = "chromai_session"
 SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
+PASSWORD_RESET_TTL_SECONDS = 30 * 60
+EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 USERNAME_RE = re.compile(r"^[\w\u4e00-\u9fa5.-]{3,24}$", re.UNICODE)
 DEFAULT_PREFERENCES = {
     "default_phase": "reversed",
@@ -106,6 +109,8 @@ def _bootstrap_demo() -> None:
     store["users"].append({
         "id": demo_id,
         "username": DEMO_USER,
+        "email": f"{DEMO_USER.lower()}@chromai.local",
+        "email_verified": False,
         "salt": salt,
         "password_hash": _hash_password(DEMO_PASS, salt),
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -121,7 +126,15 @@ def _public_user(user: dict) -> dict:
         "id": user["id"],
         "username": user["username"],
         "created_at": user["created_at"],
+        "email": user.get("email"),
     }
+
+
+def _normalize_email(value: object) -> str:
+    email = str(value).strip().lower() if value is not None else ""
+    if len(email) > 254 or not EMAIL_RE.match(email):
+        raise AuthError("邮箱格式不正确")
+    return email
 
 
 def _normalize_username(value: object) -> str:
@@ -168,17 +181,23 @@ def _issue_session(store: dict, user_id: str) -> str:
     return token
 
 
-def register(username_value: object, password_value: object) -> tuple[dict, str]:
+def register(username_value: object, email_value: object, password_value: object) -> tuple[dict, str]:
     username = _normalize_username(username_value)
+    email = _normalize_email(email_value)
     password = _normalize_password(password_value)
     store = load_store()
     _prune_sessions(store)
+    _prune_password_resets(store)
     if any(user["username"].lower() == username.lower() for user in store["users"]):
         raise AuthError("该用户名已被注册", 409)
+    if any(str(user.get("email") or "").lower() == email for user in store["users"]):
+        raise AuthError("该邮箱已被注册，可直接找回密码", 409)
     salt = secrets.token_hex(16)
     user = {
         "id": str(uuid.uuid4()),
         "username": username,
+        "email": email,
+        "email_verified": False,
         "salt": salt,
         "password_hash": _hash_password(password, salt),
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
@@ -236,6 +255,89 @@ def logout(token: Optional[str]) -> None:
         save_store(store)
 
 
+def _prune_password_resets(store: dict) -> None:
+    now = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
+    resets = store.get("password_resets")
+    if not isinstance(resets, dict):
+        store["password_resets"] = {}
+        return
+    for token in list(resets):
+        entry = resets.get(token) or {}
+        if int(entry.get("expires_at", 0)) <= now:
+            resets.pop(token, None)
+
+
+def request_password_reset(email_value: object) -> dict:
+    email = _normalize_email(email_value)
+    store = load_store()
+    _prune_password_resets(store)
+    user = next(
+        (item for item in store["users"] if str(item.get("email") or "").lower() == email),
+        None,
+    )
+    # Always answer {"ok": True} so the endpoint cannot enumerate accounts.
+    if not user:
+        save_store(store)
+        return {"ok": True}
+    for token in list(store["password_resets"]):
+        if (store["password_resets"].get(token) or {}).get("user_id") == user["id"]:
+            store["password_resets"].pop(token, None)
+    token = secrets.token_hex(24)
+    store["password_resets"][token] = {
+        "user_id": user["id"],
+        "expires_at": int(datetime.now(tz=timezone.utc).timestamp() * 1000)
+        + PASSWORD_RESET_TTL_SECONDS * 1000,
+    }
+    save_store(store)
+
+    text = "\n".join([
+        f"你好 {user['username']}，",
+        "",
+        "我们收到了你的密码重置请求。请在 30 分钟内使用以下重置令牌完成密码重置：",
+        "",
+        f"    {token}",
+        "",
+        "如果这不是你的操作，请忽略本邮件，你的密码不会改变。",
+        "",
+        "— ChromAI",
+    ])
+    try:
+        mailed = send_mail(to=email, subject="ChromAI 密码重置", text=text)
+    except Exception as exc:  # noqa: BLE001
+        mailed = {"sent": False, "reason": str(exc)}
+
+    result: dict = {"ok": True, "mail_sent": bool(mailed.get("sent"))}
+    if not mailed.get("sent"):
+        # No SMTP configured or delivery failed — expose the token so the
+        # deployment stays usable.  Set CHROM_SMTP_URL to deliver by mail.
+        result["debug_token"] = token
+        print(f"[chromai.auth] password reset token for {email}: {token}")
+    return result
+
+
+def reset_password(token_value: object, new_password_value: object) -> None:
+    token = str(token_value).strip() if token_value is not None else ""
+    if not token:
+        raise AuthError("缺少重置令牌")
+    store = load_store()
+    _prune_password_resets(store)
+    entry = store["password_resets"].get(token)
+    if not entry:
+        raise AuthError("重置令牌无效或已过期", 400)
+    user = _find_user(store, entry["user_id"])
+    password = _normalize_password(new_password_value)
+    salt = secrets.token_hex(16)
+    user["salt"] = salt
+    user["password_hash"] = _hash_password(password, salt)
+    for t in list(store["sessions"]):
+        if (store["sessions"].get(t) or {}).get("user_id") == user["id"]:
+            store["sessions"].pop(t, None)
+    for t in list(store["password_resets"]):
+        if (store["password_resets"].get(t) or {}).get("user_id") == user["id"]:
+            store["password_resets"].pop(t, None)
+    save_store(store)
+
+
 def _ensure_account(user: dict) -> dict:
     if not isinstance(user.get("preferences"), dict):
         user["preferences"] = dict(DEFAULT_PREFERENCES)
@@ -268,7 +370,7 @@ def _normalize_preferences(patch: object) -> dict:
     if organic not in options:
         organic = options[0]
     detector = patch.get("default_detector")
-    if detector not in ("UV", "MS"):
+    if detector not in ("UV", "FLD", "RID", "ELSD", "MS"):
         detector = DEFAULT_PREFERENCES["default_detector"]
     try:
         temperature = int(round(float(patch.get("default_temperature_c", 30))))
