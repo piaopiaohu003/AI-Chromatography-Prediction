@@ -7,6 +7,7 @@ const detector = require('../lib/detector');
 const simulation = require('../lib/simulation');
 const models = require('../lib/models');
 const { COMPOUNDS } = require('../lib/compounds');
+const aiClient = require('../lib/ai-client');
 
 const SAMPLE = models.normalizeCompoundList([COMPOUNDS[0]]);
 
@@ -181,6 +182,20 @@ test('each detector reports its own advisory warning', () => {
   assert.ok(simulateWith({ detector: 'ELSD' }).warnings.some((item) => item.includes('挥发性缓冲盐')));
   assert.ok(simulateWith({ detector: 'MS' }).warnings.some((item) => item.includes('MS')));
 });
+
+test('AI payload omits temperature by default for strict providers', () => {
+  const payload = aiClient.buildPayload([{ role: 'user', content: 'ping' }]);
+  assert.equal('temperature' in payload, false);
+  assert.equal(payload.max_tokens, 2000);
+  assert.deepEqual(payload.response_format, { type: 'json_object' });
+});
+
+test('AI payload honours explicit temperature and text mode', () => {
+  const payload = aiClient.buildPayload([], { temperature: 0.3, jsonMode: false });
+  assert.equal(payload.temperature, 0.3);
+  assert.equal('response_format' in payload, false);
+});
+
 
 test('image signatures are verified from base64 payloads', () => {
   const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]).toString('base64');

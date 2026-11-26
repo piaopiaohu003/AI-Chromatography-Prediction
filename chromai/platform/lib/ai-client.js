@@ -86,20 +86,26 @@ async function post(config, payload) {
   return { url, headers, payload: data, response };
 }
 
+function buildPayload(messages, options = {}) {
+  const { jsonMode = true, maxTokens = 2000, temperature } = options;
+  const payload = { messages, max_tokens: maxTokens };
+  // Omit temperature unless a caller explicitly needs it: several newer models
+  // (for example Moonshot kimi-k3) reject any value other than 1.
+  if (temperature !== undefined && temperature !== null) {
+    payload.temperature = temperature;
+  }
+  if (jsonMode) {
+    payload.response_format = { type: 'json_object' };
+  }
+  return payload;
+}
+
 async function chat(config, messages, options = {}) {
   if (!config || !config.configured) {
     throw new AIError('未配置 API Key');
   }
-  const { temperature = 0.2, jsonMode = true, maxTokens = 2000 } = options;
-
-  const payload = {
-    messages,
-    temperature,
-    max_tokens: maxTokens,
-  };
-  if (jsonMode) {
-    payload.response_format = { type: 'json_object' };
-  }
+  const { jsonMode = true } = options;
+  const payload = buildPayload(messages, options);
 
   let result = await post(config, payload);
   let response = result.response;
@@ -108,6 +114,14 @@ async function chat(config, messages, options = {}) {
   // Some providers reject response_format; retry once without it.
   if ([400, 404, 422].includes(response.status) && jsonMode) {
     delete payload.response_format;
+    result = await post(config, payload);
+    response = result.response;
+    text = await response.text();
+  }
+
+  // A provider may still insist on a fixed temperature; drop ours and retry.
+  if (response.status === 400 && payload.temperature !== undefined && /temperature/i.test(text)) {
+    delete payload.temperature;
     result = await post(config, payload);
     response = result.response;
     text = await response.text();
@@ -215,7 +229,7 @@ async function testConnection(config) {
       { role: 'system', content: 'You are a connectivity probe. Reply with OK only.' },
       { role: 'user', content: 'ping' },
     ],
-    { temperature: 0.0, jsonMode: false, maxTokens: 16 },
+    { jsonMode: false, maxTokens: 16 },
   );
   return {
     ok: true,
@@ -229,6 +243,7 @@ module.exports = {
   resolveConfig,
   publicStatus,
   endpoint,
+  buildPayload,
   chat,
   extractJson,
   testConnection,

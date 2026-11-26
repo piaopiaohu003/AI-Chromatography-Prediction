@@ -964,7 +964,7 @@ async function aiConditions(compounds, constraints, override) {
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: JSON.stringify(payload) },
   ];
-  const content = await aiClient.chat(config, messages, { temperature: 0.2, jsonMode: true });
+  const content = await aiClient.chat(config, messages, { jsonMode: true });
   const raw = aiClient.extractJson(content);
   const fallbackPhase = choosePhase(compounds, constraints);
   const fallback = {

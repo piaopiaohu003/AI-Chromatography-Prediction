@@ -181,6 +181,7 @@ Node HTTP 服务 (server.js)
 - 未配置 API Key 或 LLM 失败时，自动回退到规则引擎并写入 `llm_error`。
 - 返回包含 `conditions`、`result`、`method`、`rationale`、`risks`、`expected_order`。
 - 单次最多 20 个组分；AI 覆盖结果必须通过 `coerceAiConditions` 的范围校验。
+- 请求默认不发送 `temperature`，兼容仅接受固定温度（如 Moonshot `kimi-k3`）的模型；若调用方显式指定且上游拒绝，会自动去掉该字段重试一次。
 
 ### 7.3 界面检测（detector.js）
 
