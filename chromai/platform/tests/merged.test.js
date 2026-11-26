@@ -197,6 +197,30 @@ test('AI payload honours explicit temperature and text mode', () => {
 });
 
 
+test('AI requests stop waiting before the platform gateway times out', async () => {
+  const http = require('http');
+  const server = http.createServer(() => {});
+  await new Promise((resolve) => { server.listen(0, '127.0.0.1', resolve); });
+  const { port } = server.address();
+  process.env.CHROM_AI_TIMEOUT_MS = '1500';
+  try {
+    await assert.rejects(
+      aiClient.chat(
+        { configured: true, base_url: `http://127.0.0.1:${port}/v1`, model: 'slow-model', api_key: 'k' },
+        [{ role: 'user', content: 'ping' }],
+        { jsonMode: false },
+      ),
+      (error) => /超时/.test(error.message),
+    );
+  } finally {
+    delete process.env.CHROM_AI_TIMEOUT_MS;
+    if (typeof server.closeAllConnections === 'function') {
+      server.closeAllConnections();
+    }
+    server.close();
+  }
+});
+
 test('image signatures are verified from base64 payloads', () => {
   const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]).toString('base64');
   const accepted = detector.decodeImage({ filename: 'screen.png', mimeType: 'image/png', data_base64: png });

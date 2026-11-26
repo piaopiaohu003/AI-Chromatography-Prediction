@@ -182,6 +182,7 @@ Node HTTP 服务 (server.js)
 - 返回包含 `conditions`、`result`、`method`、`rationale`、`risks`、`expected_order`。
 - 单次最多 20 个组分；AI 覆盖结果必须通过 `coerceAiConditions` 的范围校验。
 - 请求默认不发送 `temperature`，兼容仅接受固定温度（如 Moonshot `kimi-k3`）的模型；若调用方显式指定且上游拒绝，会自动去掉该字段重试一次。
+- 上游等待上限由 `CHROM_AI_TIMEOUT_MS` 控制（默认 40 s）；超时抛 `大模型响应超时`，由 `recommend` 捕获后返回规则方案并写入 `llm_error`，避免网关 504。
 
 ### 7.3 界面检测（detector.js）
 
@@ -295,6 +296,7 @@ PubChem：
 | `CHROM_AI_BASE_URL` / `OPENAI_BASE_URL` | 未设置 | OpenAI 兼容接口地址 |
 | `CHROM_AI_MODEL` / `OPENAI_MODEL` | 未设置 | 模型名 |
 | `CHROM_AI_API_KEY` / `OPENAI_API_KEY` | 未设置 | 模型密钥；缺失时仅用规则引擎 |
+| `CHROM_AI_TIMEOUT_MS` | `40000` | 调用大模型的等待上限；超时立即回退规则方案，避免网关 504 |
 | `CHROM_SMTP_URL` / `CHROM_MAIL_FROM` | 未设置 | 密码重置邮件；未配置时重置码不可投递 |
 
 ---

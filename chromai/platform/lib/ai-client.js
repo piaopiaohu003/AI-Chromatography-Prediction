@@ -64,6 +64,14 @@ function endpoint(baseUrl) {
   return base + '/v1/chat/completions';
 }
 
+function aiTimeoutMs() {
+  const raw = Number(process.env.CHROM_AI_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw >= 1000) {
+    return Math.min(Math.round(raw), 120000);
+  }
+  return 40000;
+}
+
 async function post(config, payload) {
   const url = endpoint(config.base_url);
   const headers = {
@@ -71,16 +79,20 @@ async function post(config, payload) {
     'Content-Type': 'application/json',
   };
   const data = { ...payload, model: config.model };
+  const timeoutMs = aiTimeoutMs();
   let response;
   try {
     response = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(data),
-      signal: AbortSignal.timeout(90000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (exc) {
     // network / proxy / timeout problems
+    if (exc && (exc.name === 'TimeoutError' || exc.name === 'AbortError')) {
+      throw new AIError(`大模型响应超时（${Math.round(timeoutMs / 1000)}s）`);
+    }
     throw new AIError(`网络请求失败：${exc && exc.message ? exc.message : exc}`);
   }
   return { url, headers, payload: data, response };
