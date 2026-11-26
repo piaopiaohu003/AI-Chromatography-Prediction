@@ -331,6 +331,30 @@ button { cursor: pointer; }
   padding: 1px 7px;
 }
 
+/* Keep the detector pickers on the same dark control surface as the other
+ * selects in the simulator (column, light-scattering and MS options). */
+#sim-detector,
+.detector-params select {
+  width: 100%;
+  background: rgba(8, 14, 19, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 9px;
+  font-size: 11.5px;
+  color: var(--text);
+  cursor: pointer;
+}
+#sim-detector:focus,
+.detector-params select:focus {
+  outline: none;
+  border-color: var(--teal-dim);
+}
+#sim-detector option,
+.detector-params select option {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
 .segmented {
   display: flex;
   background: rgba(8, 14, 19, 0.62);
