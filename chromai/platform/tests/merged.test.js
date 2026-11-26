@@ -8,6 +8,8 @@ const simulation = require('../lib/simulation');
 const models = require('../lib/models');
 const { COMPOUNDS } = require('../lib/compounds');
 const aiClient = require('../lib/ai-client');
+const recommend = require('../lib/recommend');
+const literature = require('../lib/literature');
 
 const SAMPLE = models.normalizeCompoundList([COMPOUNDS[0]]);
 
@@ -233,4 +235,152 @@ test('image signatures are verified from base64 payloads', () => {
     () => detector.decodeImage({ filename: 'screen.bmp', mimeType: 'image/bmp', data_base64: png }),
     (error) => Boolean(error.fields.image),
   );
+});
+
+test('AI literature query combines analytes with detector and phase', () => {
+  const compounds = models.normalizeCompoundList([
+    COMPOUNDS[0], COMPOUNDS[1], COMPOUNDS[2], COMPOUNDS[3],
+  ]);
+  const query = recommend.literatureQuery(compounds, { detector: 'MS', phase: 'reversed' });
+  assert.match(query, /Acetaminophen/);
+  assert.match(query, /LC-MS/);
+  assert.match(query, /reversed phase/);
+  assert.ok(query.length <= 160);
+});
+
+test('literature failure degrades without blocking condition design', async () => {
+  const originalSearch = literature.search;
+  literature.search = async () => {
+    throw new Error('network down');
+  };
+  try {
+    const context = await recommend.gatherLiterature(SAMPLE, { detector: 'UV', phase: 'auto' });
+    assert.equal(context.status, 'error');
+    assert.deepEqual(context.items, []);
+    assert.match(context.errors[0], /network down/);
+  } finally {
+    literature.search = originalSearch;
+  }
+});
+
+test('AI references are restricted to retrieved literature', () => {
+  const items = [
+    { index: 1, title: 'Paper A' },
+    { index: 2, title: 'Paper B' },
+  ];
+  const references = recommend.sanitizeReferences(
+    [1, { ref: 2, note: '梯度条件' }, 9, { ref: 'unknown' }],
+    ['酸性流动相抑制电离 [2]；[7] 不在检索结果中'],
+    items,
+  );
+  assert.deepEqual(references.map((item) => item.index), [1, 2]);
+  assert.equal(references[1].note, '梯度条件');
+  assert.equal(references[0].title, 'Paper A');
+});
+
+test('AI conditions consume literature evidence and return filtered references', async () => {
+  const originalChat = aiClient.chat;
+  let captured = null;
+  aiClient.chat = async (config, messages) => {
+    captured = messages;
+    return JSON.stringify({
+      method_name: '文献辅助方法',
+      phase: 'reversed',
+      mode: 'gradient',
+      organic: 'ACN',
+      gradient: [
+        { time_min: 0, percent_b: 5 },
+        { time_min: 20, percent_b: 95 },
+        { time_min: 25, percent_b: 95 },
+      ],
+      flow_ml_min: 1,
+      temperature_c: 30,
+      ph: 2.5,
+      wavelength_nm: 254,
+      column: { length_mm: 150, inner_diameter_mm: 4.6, particle_um: 5, chemistry: 'c18' },
+      dwell_volume_ml: 1,
+      injection_volume_ul: 10,
+      buffer_system: '0.1% 甲酸水溶液',
+      rationale: ['酸性流动相抑制电离以改善峰形 [1]'],
+      risks: [],
+      references: [{ ref: 1, note: '文献中的甲酸体系' }, { ref: 4, note: '不存在的文献' }],
+      expected_order: [],
+    });
+  };
+  try {
+    const context = {
+      query: 'Acetaminophen HPLC reversed phase separation',
+      status: 'ok',
+      items: [{
+        index: 1,
+        title: 'Determination of acetaminophen by HPLC',
+        journal: 'J. Chromatogr. A',
+        year: 2020,
+        doi: '10.1000/example',
+        url: 'https://doi.org/10.1000/example',
+        abstract: 'A C18 method with formic acid.',
+      }],
+      errors: [],
+      sources: { europepmc: 'ok', crossref: 'ok' },
+    };
+    const result = await recommend.aiConditions(
+      SAMPLE,
+      models.normalizeConstraints({}),
+      { api_key: 'test-key' },
+      context,
+    );
+    assert.equal(result.references.length, 1);
+    assert.equal(result.references[0].index, 1);
+    assert.equal(result.literature.status, 'ok');
+    assert.equal(result.literature.count, 1);
+    const payload = JSON.parse(captured[1].content);
+    assert.equal(payload.literature.evidence[0].ref, 1);
+    assert.match(payload.literature.instruction, /evidence/);
+  } finally {
+    aiClient.chat = originalChat;
+  }
+});
+
+test('successful AI design survives the physics quality review', async () => {
+  const originalChat = aiClient.chat;
+  const originalSearch = literature.search;
+  aiClient.chat = async () => JSON.stringify({
+    method_name: 'AI 方法',
+    phase: 'reversed',
+    mode: 'gradient',
+    organic: 'ACN',
+    gradient: [
+      { time_min: 0, percent_b: 5 },
+      { time_min: 20, percent_b: 95 },
+      { time_min: 25, percent_b: 95 },
+    ],
+    flow_ml_min: 1,
+    temperature_c: 30,
+    ph: 2.5,
+    wavelength_nm: 254,
+    column: { length_mm: 150, inner_diameter_mm: 4.6, particle_um: 5, chemistry: 'c18' },
+    dwell_volume_ml: 1,
+    injection_volume_ul: 10,
+    buffer_system: '0.1% 甲酸水溶液',
+    rationale: ['基于化学性质与分离原理设计'],
+    risks: [],
+    references: [],
+    expected_order: [],
+  });
+  literature.search = async () => ({ results: [], sources: {}, errors: [] });
+  try {
+    const compounds = models.normalizeCompoundList([COMPOUNDS[3]]);
+    const result = await recommend.recommend(
+      compounds,
+      models.normalizeConstraints({}),
+      { api_key: 'test-key' },
+    );
+    assert.equal(result.source, 'llm');
+    assert.equal(result.llm_error, null);
+    assert.deepEqual(result.references, []);
+    assert.equal(result.literature.status, 'empty');
+  } finally {
+    aiClient.chat = originalChat;
+    literature.search = originalSearch;
+  }
 });

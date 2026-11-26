@@ -2739,6 +2739,43 @@ function renderAIResult(result) {
       </div>`
     : "";
 
+  const references = Array.isArray(result.references) ? result.references : [];
+  const literature = result.literature || null;
+  const referenceUrl = (item) => {
+    const url = String(item.url || "");
+    if (/^https?:\/\//i.test(url)) return url;
+    return item.doi ? `https://doi.org/${item.doi}` : "";
+  };
+  const referenceItems = references.map((item) => {
+    const url = referenceUrl(item);
+    const label = `[${item.index}] ${item.title || "未命名文献"}`;
+    const meta = [item.journal, item.year].filter(Boolean).join(" · ");
+    return `<li>
+      ${url
+        ? `<a class="lit-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`
+        : `<span>${escapeHtml(label)}</span>`}
+      ${meta ? `<span class="lit-meta">${escapeHtml(meta)}</span>` : ""}
+      ${item.note ? `<span class="ref-note">${escapeHtml(item.note)}</span>` : ""}
+    </li>`;
+  }).join("");
+  let literatureSection = "";
+  if (literature && literature.status && literature.status !== "skipped") {
+    if (references.length) {
+      literatureSection = `
+        <div class="section-title">文献依据 · 引用 ${references.length} 篇</div>
+        <ul class="ref-list">${referenceItems}</ul>`;
+    } else if (literature.status === "error") {
+      const reason = (literature.errors || []).join("；") || "检索服务不可用";
+      literatureSection = `
+        <div class="section-title">文献依据</div>
+        <p class="ref-empty">文献检索未完成（${escapeHtml(reason)}），本次条件仅基于组分化学性质与色谱分离原理生成。</p>`;
+    } else {
+      literatureSection = `
+        <div class="section-title">文献依据</div>
+        <p class="ref-empty">未检索到可直接引用的文献，本次条件仅基于组分化学性质与色谱分离原理生成。</p>`;
+    }
+  }
+
   $("#ai-results").innerHTML = `
     <section class="card">
       <div class="ai-result-head">
@@ -2771,6 +2808,8 @@ function renderAIResult(result) {
       <ul class="bullet-list">
         ${(result.rationale || []).map((text) => `<li>${escapeHtml(text)}</li>`).join("") || "<li>—</li>"}
       </ul>
+
+      ${literatureSection}
 
       <div class="section-title">风险与验证建议</div>
       <div class="warning-list">${risksHtml}</div>

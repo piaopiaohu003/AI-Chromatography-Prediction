@@ -128,10 +128,10 @@ function sanitizeYear(year) {
   return value;
 }
 
-async function fetchJson(url) {
+async function fetchJson(url, timeoutMs = TIMEOUT_MS) {
   const response = await fetch(url, {
     headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
@@ -239,7 +239,7 @@ function mergeItems(first, second) {
   return merged;
 }
 
-async function searchEuropePmc(query, limit, sort, fromYear, toYear) {
+async function searchEuropePmc(query, limit, sort, fromYear, toYear, timeoutMs) {
   const params = new URLSearchParams({
     query,
     format: 'json',
@@ -251,12 +251,13 @@ async function searchEuropePmc(query, limit, sort, fromYear, toYear) {
   if (fromYear) params.set('query', `${query} AND (FIRST_PDATE:[${fromYear}-01-01 TO ${toYear || 2100}-12-31])`);
   const data = await fetchJson(
     `https://www.ebi.ac.uk/europepmc/webservices/rest/search?${params.toString()}`,
+    timeoutMs,
   );
   const records = data?.resultList?.result || [];
   return records.map(fromEuropePmc).filter(Boolean);
 }
 
-async function searchCrossref(query, limit, sort, fromYear, toYear) {
+async function searchCrossref(query, limit, sort, fromYear, toYear, timeoutMs) {
   const params = new URLSearchParams({
     'query.bibliographic': query,
     rows: String(limit),
@@ -268,7 +269,7 @@ async function searchCrossref(query, limit, sort, fromYear, toYear) {
   if (fromYear) {
     params.set('filter', `from-pub-date:${fromYear}-01-01,until-pub-date:${toYear || 2100}-12-31`);
   }
-  const data = await fetchJson(`https://api.crossref.org/works?${params.toString()}`);
+  const data = await fetchJson(`https://api.crossref.org/works?${params.toString()}`, timeoutMs);
   const records = data?.message?.items || [];
   return records.map(fromCrossref).filter(Boolean);
 }
@@ -292,6 +293,10 @@ async function search(queryInput, options = {}) {
   const sort = ['relevance', 'newest', 'cited'].includes(options.sort) ? options.sort : 'relevance';
   const fromYear = Number.parseInt(options.from_year, 10) || null;
   const toYear = Number.parseInt(options.to_year, 10) || null;
+  const requested = Number.parseInt(options.timeout_ms, 10);
+  const timeoutMs = Number.isFinite(requested)
+    ? Math.min(TIMEOUT_MS, Math.max(2000, requested))
+    : TIMEOUT_MS;
   const key = JSON.stringify([query, sort, fromYear, toYear, limit]);
   const cached = cache.get(key);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
@@ -300,8 +305,8 @@ async function search(queryInput, options = {}) {
 
   const perSource = Math.min(50, Math.max(limit * 2, 20));
   const [epmc, crossref] = await Promise.allSettled([
-    searchEuropePmc(query, perSource, sort, fromYear, toYear),
-    searchCrossref(query, perSource, sort, fromYear, toYear),
+    searchEuropePmc(query, perSource, sort, fromYear, toYear, timeoutMs),
+    searchCrossref(query, perSource, sort, fromYear, toYear, timeoutMs),
   ]);
 
   const errors = [];

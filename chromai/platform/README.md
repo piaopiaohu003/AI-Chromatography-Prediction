@@ -15,7 +15,7 @@
 | 视图 | 用途 | 依赖接口 |
 |-|-|-|
 | 色谱模拟 | 编辑样品组分与方法条件，计算保留时间、分离度、柱压并绘制色谱图 | `POST /api/simulate` |
-| AI 条件设计 | 生成 pH、有机相、色谱柱、流速、波长与梯度程序，附设计依据与风险 | `POST /api/recommend` |
+| AI 条件设计 | 先按组分与约束检索文献，再结合化学性质与分离原理生成 pH、有机相、色谱柱、流速、波长与梯度程序，附文献依据、设计依据与风险 | `POST /api/recommend` |
 | 文献参考 | 检索 Europe PMC / Crossref，按主题建立监控并扫描新文献 | `/api/literature/*` |
 | 化合物检索 | ChemicalBook 四级展示：数据源状态 → 匹配列表 → 化合物档案 → 性质与摘要 | `GET /api/compounds/search` |
 | 界面检测 | 模拟识别仪器界面模块，六项方法参数联合校验，可选上传截图 | `POST /api/interface/detect` |
@@ -123,12 +123,12 @@ Node HTTP 服务 (server.js)
 |-|-|-|
 | `models.js` | 请求归一化 | 校验组分、条件、约束、观测峰；统一字段名与范围 |
 | `simulation.js` | 物理模型 | LSS 保留、电离、温度校正、Knox 塔板、梯度积分、EMG 峰形 |
-| `recommend.js` | 方法设计 | 规则引擎生成候选并用同一模拟器复核；可选 LLM 覆盖 |
+| `recommend.js` | 方法设计 | 规则引擎生成候选并用同一模拟器复核；LLM 路径先检索文献、再结合化学性质与分离原理设计，引用经白名单校验 |
 | `identify.js` | 未知峰识别 | 候选池过滤 + 匈牙利算法最优指派，最多 200 候选 |
 | `detector.js` | 界面检测 | 六参数必填/范围、五种路由、图片签名、模块置信度 |
 | `chemicalbook.js` | 参考检索 | 20 s 超时、128 条内存缓存、人机验证识别、四级解析 |
 | `pubchem.js` | 在线检索 | 名称/CAS → 结构字段，缺失的 logP/pKa/λ 采用经验估算 |
-| `literature.js` | 文献 | Europe PMC + Crossref 合并去重；主题监控记录已见 ID |
+| `literature.js` | 文献 | Europe PMC + Crossref 合并去重；支持超时预算；主题监控记录已见 ID |
 | `ai-client.js` | 模型调用 | 解析 `chat/completions`、提取 JSON、超时与错误封装 |
 | `auth.js` | 账户 | scrypt 密码、7 天会话、偏好、收藏、文献主题、重置码 |
 | `store.js` | 持久化 | Redis 可用则用 Redis，否则写本地 JSON（原子替换） |
@@ -175,11 +175,15 @@ Node HTTP 服务 (server.js)
   → 生成等度或梯度程序
   → 用 simulation 逐候选复核（分离度、峰形、运行时间）
   → 选出最优方案
-  → （可选）LLM 依约束给出方案 → 结构校验 → 再次物理复核
+  → （可选）按“组分英文名 + 检测器 + 相模式”检索 Europe PMC / Crossref
+  → LLM 先依据文献结论、再结合化学性质与分离原理给出方案
+  → 结构校验 + 引用编号白名单校验 → 再次物理复核
 ```
 
 - 未配置 API Key 或 LLM 失败时，自动回退到规则引擎并写入 `llm_error`。
-- 返回包含 `conditions`、`result`、`method`、`rationale`、`risks`、`expected_order`。
+- 文献检索与 LLM 串行执行：检索预算 8 s（超时或上游失败立即降级），LLM 预算 40 s，合计低于网关上限；文献失败不阻断条件生成，只记录在 `literature.status/errors`。
+- 返回包含 `conditions`、`result`、`method`、`rationale`、`risks`、`references`、`literature`、`expected_order`。
+- `references` 只保留检索结果中真实存在的编号；模型输出与 rationale 中出现的 `[n]` 都会经过白名单过滤，无法编造文献。
 - 单次最多 20 个组分；AI 覆盖结果必须通过 `coerceAiConditions` 的范围校验。
 - 请求默认不发送 `temperature`，兼容仅接受固定温度（如 Moonshot `kimi-k3`）的模型；若调用方显式指定且上游拒绝，会自动去掉该字段重试一次。
 - 上游等待上限由 `CHROM_AI_TIMEOUT_MS` 控制（默认 40 s）；超时抛 `大模型响应超时`，由 `recommend` 捕获后返回规则方案并写入 `llm_error`，避免网关 504。
@@ -209,8 +213,9 @@ PubChem：
 ### 7.5 文献（literature.js）
 
 - 并行查询 Europe PMC 与 Crossref，规范化标题、作者、期刊、年份、DOI 并去重。
+- `search` 支持 `timeout_ms`（2–12 s），AI 条件设计使用 8 s 预算，确保文献步骤不会挤占 LLM 的网关时间。
 - 主题监控按用户保存检索式与已见记录 ID；`scan` 只返回新增条目。
-- 上游失败返回 502，不返回伪造记录。
+- 上游失败返回 502，不返回伪造记录；AI 条件设计内部检索失败时降级为“仅基于化学性质与分离原理”。
 
 ### 7.6 未知峰识别（identify.js）
 

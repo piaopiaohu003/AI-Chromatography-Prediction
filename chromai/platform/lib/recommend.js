@@ -6,6 +6,7 @@
  * each candidate with the same physical simulation used by the API. */
 
 const aiClient = require('./ai-client');
+const literature = require('./literature');
 const {
   DEFAULT_GRADIENT, DEFAULT_COLUMN, isPlainObject,
 } = require('./models');
@@ -15,6 +16,8 @@ const {
 const { pyRound, clamp, mean, maxOf, minOf } = require('./util');
 
 const PH_CANDIDATES = [2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.8, 7.5, 8.5, 9.5, 10.5];
+const LITERATURE_LIMIT = 6;
+const LITERATURE_TIMEOUT_MS = 8000;
 const CHEMISTRY_LABELS = {
   c18: 'C18', silica: 'Silica', diol: 'Diol', amino: 'Amino',
 };
@@ -48,6 +51,8 @@ const SYSTEM_PROMPT = `你是一名资深液相色谱方法开发专家，精通
 9. 目标：等度时各组分 k≈1–10；梯度时所有组分在运行时间内洗脱，相邻峰 Rs≥1.5。
 10. 不要编造未提供的化合物性质；只能基于给出的 logP/pKa/λmax/logkw。
 11. rationale、risks 使用简体中文，各 2–5 条，具体到数值依据。
+12. 若 literature.evidence 非空，必须先用其中的分离模式、流动相、pH 与梯度结论校准设计，再结合组分化学性质与色谱分离科学原理复核；rationale 中引用文献时用 [编号] 标注，编号只能来自 evidence 的 ref。
+13. references 只允许列出实际使用的 evidence 编号；没有文献依据时输出空数组，禁止编造文献、作者或 DOI。
 
 JSON 结构：
 {
@@ -67,6 +72,7 @@ JSON 结构：
   "buffer_system": "string",
   "rationale": ["string", ...],
   "risks": ["string", ...],
+  "references": [{"ref": number, "note": "string"}, ...],
   "expected_order": ["string", ...]
 }`;
 
@@ -927,20 +933,166 @@ function coerceAiConditions(raw, fallback) {
   };
 }
 
-async function aiConditions(compounds, constraints, override) {
+/* ------------------------------------------------------------------ */
+/* literature-assisted design                                          */
+/* ------------------------------------------------------------------ */
+
+/* The literature step runs before the LLM and is strictly best-effort: a
+ * timeout or upstream failure degrades to the property/principle-only prompt
+ * instead of blocking method design. */
+
+function literatureQuery(compounds, constraints = {}) {
+  const names = [];
+  for (const compound of compounds) {
+    const name = String(compound.name_en || compound.name || '').trim();
+    if (name && !names.includes(name)) names.push(name);
+    if (names.length >= 3) break;
+  }
+  if (!names.length) return '';
+  let detectorTerm = 'HPLC';
+  if (constraints.detector === 'MS') detectorTerm = 'LC-MS';
+  else if (constraints.detector === 'FLD') detectorTerm = 'HPLC fluorescence';
+  const phaseTerm = constraints.phase === 'normal'
+    ? 'normal phase separation'
+    : 'reversed phase separation';
+  const suffix = ` ${detectorTerm} ${phaseTerm}`;
+  const budget = Math.max(20, 160 - suffix.length);
+  let nameText = '';
+  for (const name of names) {
+    const candidate = nameText ? `${nameText} ${name}` : name;
+    if (candidate.length > budget) break;
+    nameText = candidate;
+  }
+  if (!nameText) nameText = names[0].slice(0, budget).trim();
+  return (nameText + suffix).trim();
+}
+
+function compactReference(item, index) {
+  const url = String(item.url || '').trim();
+  return {
+    index,
+    id: item.id || null,
+    title: literature.cleanText(item.title, 220),
+    authors: literature.cleanText(item.authors, 140),
+    journal: literature.cleanText(item.journal, 90),
+    year: item.year === undefined ? null : item.year,
+    doi: item.doi || null,
+    url: /^https?:\/\//i.test(url) ? url : (item.doi ? `https://doi.org/${item.doi}` : ''),
+    abstract: literature.cleanText(item.abstract, 260),
+  };
+}
+
+async function gatherLiterature(compounds, constraints, options = {}) {
+  const query = literatureQuery(compounds, constraints);
+  if (!query) {
+    return { query: '', status: 'empty', items: [], errors: [], sources: {} };
+  }
+  const timeoutMs = Number(options.timeout_ms) > 0
+    ? Number(options.timeout_ms) : LITERATURE_TIMEOUT_MS;
+  try {
+    const data = await literature.search(query, {
+      limit: LITERATURE_LIMIT,
+      sort: 'relevance',
+      timeout_ms: timeoutMs,
+    });
+    const items = (data.results || [])
+      .slice(0, LITERATURE_LIMIT)
+      .map((item, index) => compactReference(item, index + 1));
+    return {
+      query,
+      status: items.length ? 'ok' : 'empty',
+      items,
+      errors: data.errors || [],
+      sources: data.sources || {},
+    };
+  } catch (err) {
+    return {
+      query,
+      status: 'error',
+      items: [],
+      errors: [err && err.message ? err.message : String(err)],
+      sources: {},
+    };
+  }
+}
+
+function literatureSummary(context) {
+  if (!context) {
+    return { query: null, status: 'skipped', count: 0, errors: [], sources: {} };
+  }
+  return {
+    query: context.query,
+    status: context.status,
+    count: (context.items || []).length,
+    errors: context.errors || [],
+    sources: context.sources || {},
+  };
+}
+
+/* Accepts both [{ref, note}] and bare reference numbers, then adds inline
+ * [n] citations found in the rationale. Anything outside the retrieved set is
+ * dropped so the model cannot fabricate sources. */
+function sanitizeReferences(raw, rationale, items) {
+  const available = new Map((items || []).map((item) => [item.index, item]));
+  const picked = new Map();
+  const add = (value) => {
+    let ref = value;
+    let note = '';
+    if (isPlainObject(value)) {
+      ref = value.ref !== undefined ? value.ref : (value.index !== undefined ? value.index : value.id);
+      note = value.note || value.finding || value.insight || value.basis || '';
+    }
+    const number = Number.parseInt(ref, 10);
+    if (!Number.isFinite(number) || !available.has(number)) return;
+    const existing = picked.get(number) || { index: number, note: '' };
+    if (!existing.note && note) existing.note = String(note).trim().slice(0, 200);
+    picked.set(number, existing);
+  };
+  if (Array.isArray(raw)) raw.forEach(add);
+  const lines = Array.isArray(rationale) ? rationale.map((line) => String(line)) : [];
+  lines.forEach((line) => {
+    const matches = line.matchAll(/\[(\d{1,3})\]/g);
+    for (const match of matches) add(match[1]);
+  });
+  return Array.from(picked.values())
+    .sort((a, b) => a.index - b.index)
+    .map((entry) => ({ ...available.get(entry.index), note: entry.note }));
+}
+
+async function aiConditions(compounds, constraints, override, literatureContext = null) {
   const config = aiClient.resolveConfig(override || null);
   if (!config.configured) {
     throw new aiClient.AIError('未配置大模型 API Key，已使用本地规则专家系统');
   }
 
+  const evidence = literatureContext || await gatherLiterature(compounds, constraints);
+  const evidenceItems = evidence.items || [];
+  const evidencePayload = evidenceItems.map((item) => ({
+    ref: item.index,
+    title: item.title,
+    journal: item.journal,
+    year: item.year,
+    doi: item.doi,
+    abstract: item.abstract,
+  }));
+
   const payload = {
-    task: '为下列组分设计一套科学、可上机的液相色谱条件（反相或正相）',
+    task: '先依据 literature.evidence 中的方法结论，再结合组分化学性质与色谱分离科学原理，'
+      + '设计一套科学、可上机的液相色谱条件（反相或正相）',
     constraints: {
       detector: constraints.detector,
       preferred_phase: constraints.phase,
       preferred_organic: constraints.organic,
       preferred_mode: constraints.mode,
       max_run_min: constraints.max_run_min,
+    },
+    literature: {
+      query: evidence.query || '',
+      status: evidence.status,
+      evidence: evidencePayload,
+      instruction: evidencePayload.length
+        ? '先核对 evidence 的分离模式/流动相/pH/梯度结论，再用化学性质与分离原理校验；rationale 中引用请标注 [ref]。'
+        : '未取得文献证据，请仅基于化学性质与色谱分离原理设计。',
     },
     system: {
       model: 'LSS: log10 k = log10 k0 - S*phi; 系统延迟体积已计入梯度',
@@ -1057,6 +1209,8 @@ async function aiConditions(compounds, constraints, override) {
     method,
     rationale,
     risks,
+    references: sanitizeReferences(raw.references, rationale, evidenceItems),
+    literature: literatureSummary(evidence),
     expected_order: expectedOrder(result),
   };
 }
@@ -1077,26 +1231,34 @@ async function recommend(compounds, constraints, override) {
   const config = aiClient.resolveConfig(override || null);
 
   if (config.configured) {
+    const literatureContext = await gatherLiterature(compounds, constraints);
     try {
-      const aiResult = await aiConditions(compounds, constraints, override);
+      const aiResult = await aiConditions(compounds, constraints, override, literatureContext);
       const ruleResult = ruleConditions(compounds, constraints);
-      const aiQuality = resultQuality(aiResult);
-      const ruleQuality = resultQuality(ruleResult);
+      // Both helpers return a design envelope; the simulation lives in .result.
+      const aiQuality = resultQuality(aiResult.result);
+      const ruleQuality = resultQuality(ruleResult.result);
       if (aiQuality < 0 || (aiQuality < 1.2 && ruleQuality > aiQuality + 0.25)) {
         ruleResult.llm_error = '大模型方案经物理模型复核存在未洗脱组分或分离度不足，'
           + '已自动改用规则专家系统方案。';
+        ruleResult.references = [];
+        ruleResult.literature = literatureSummary(literatureContext);
         return attachDetector(ruleResult, constraints);
       }
       return attachDetector(aiResult, constraints);
     } catch (exc) {
       const ruleResult = ruleConditions(compounds, constraints);
       ruleResult.llm_error = `大模型调用失败，已使用规则专家系统：${exc.message || exc}`;
+      ruleResult.references = [];
+      ruleResult.literature = literatureSummary(literatureContext);
       return attachDetector(ruleResult, constraints);
     }
   }
 
   const ruleResult = ruleConditions(compounds, constraints);
   ruleResult.llm_error = null;
+  ruleResult.references = [];
+  ruleResult.literature = literatureSummary(null);
   return attachDetector(ruleResult, constraints);
 }
 
@@ -1111,5 +1273,9 @@ module.exports = {
   ruleConditions,
   aiConditions,
   coerceAiConditions,
+  literatureQuery,
+  gatherLiterature,
+  sanitizeReferences,
+  literatureSummary,
   recommend,
 };
