@@ -394,6 +394,35 @@
         </section>
 
         <section class="card">
+          <div class="card-head">
+            <div class="head-title"><h2>实测对比</h2><span class="pill" id="compare-grade">—</span></div>
+            <div class="compare-actions">
+              <label class="compare-pressure">实测柱压 <input id="compare-pressure" type="number" min="0" max="5000" step="0.1" placeholder="bar"></label>
+              <button class="text-btn" id="btn-compare-calc">计算对比</button>
+              <button class="text-btn" id="btn-compare-clear">清空</button>
+              <button class="text-btn" id="btn-compare-export">导出对比</button>
+            </div>
+          </div>
+          <p class="hint">按峰录入实测 tR（必填），可选峰宽、Rs 与塔板数；系统会自动与当前模拟结果逐峰对比，并给出偏差、顺序一致性与 A/B/C 评级。</p>
+          <div class="compare-note hidden" id="compare-note"></div>
+          <div class="table-wrap">
+            <table class="peak-table compare-table">
+              <thead>
+                <tr>
+                  <th>#</th><th>组分</th><th>模拟 tR</th><th>模拟 Rs</th>
+                  <th>实测 tR</th><th>实测峰宽</th><th>实测 Rs</th><th>实测塔板数</th>
+                  <th>ΔtR / %RE</th><th>状态</th>
+                </tr>
+              </thead>
+              <tbody id="compare-table-body"></tbody>
+            </table>
+          </div>
+          <div class="compare-summary" id="compare-summary">
+            <p class="hint">录入至少一个峰的实测保留时间后，这里会显示对比结果。</p>
+          </div>
+        </section>
+
+        <section class="card">
           <div class="card-head"><h2>方法评估</h2></div>
           <div class="warning-list" id="warnings"></div>
         </section>

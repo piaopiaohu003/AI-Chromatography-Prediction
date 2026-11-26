@@ -14,7 +14,7 @@
 
 | 视图 | 用途 | 依赖接口 |
 |-|-|-|
-| 色谱模拟 | 编辑样品组分与方法条件，计算保留时间、分离度、柱压并绘制色谱图 | `POST /api/simulate` |
+| 色谱模拟 | 编辑样品组分与方法条件，计算保留时间、分离度、柱压并绘制色谱图；可录入实测峰数据并与模拟结果对比 | `POST /api/simulate`、`POST /api/compare` |
 | AI 条件设计 | 先按组分与约束检索文献，再结合化学性质与分离原理生成 pH、有机相、色谱柱、流速、波长与梯度程序，附文献依据、设计依据与风险 | `POST /api/recommend` |
 | 文献参考 | 检索 Europe PMC / Crossref / OpenAlex，并可限定分析化学顶级期刊；按主题建立监控并扫描新文献 | `/api/literature/*` |
 | 化合物检索 | ChemicalBook 四级展示：数据源状态 → 匹配列表 → 化合物档案 → 性质与摘要 | `GET /api/compounds/search` |
@@ -48,6 +48,7 @@ chromai/platform/
 │   ├── models.js          # 请求体归一化与参数校验（抛 ValidationError）
 │   ├── simulation.js      # 反相/正相保留时间与色谱图物理模型
 │   ├── recommend.js       # 规则专家系统 + 可选 LLM 方法设计
+│   ├── compare.js         # 模拟结果与实测峰的偏差、一致性与 A/B/C 评级
 │   ├── identify.js        # 未知峰与候选组分的最优指派
 │   ├── compounds.js       # 29 种内置化合物与分类
 │   ├── pubchem.js         # PubChem 在线检索与性质估算
@@ -66,7 +67,7 @@ chromai/platform/
 │       └── js/
 │           ├── app.js     # 状态、视图、请求、鉴权与全部交互
 │           └── chart.js   # Canvas 色谱图渲染
-├── tests/merged.test.js   # 10 项后端测试
+├── tests/merged.test.js   # 32 项后端测试
 ├── build.sh               # 生成 dist/
 ├── run.sh                 # exec node server.js
 └── package.json
@@ -124,6 +125,7 @@ Node HTTP 服务 (server.js)
 | `models.js` | 请求归一化 | 校验组分、条件、约束、观测峰；统一字段名与范围 |
 | `simulation.js` | 物理模型 | LSS 保留、电离、温度校正、Knox 塔板、梯度积分、EMG 峰形 |
 | `recommend.js` | 方法设计 | 规则引擎生成候选并用同一模拟器复核；LLM 路径先检索文献、再结合化学性质与分离原理设计，引用经白名单校验 |
+| `compare.js` | 实测对比 | 逐峰比较 tR / k / Rs / 塔板数，汇总 bias、MAE、RMSE、MAPE、Bland-Altman 界限与顺序一致率，输出 A/B/C 评级 |
 | `identify.js` | 未知峰识别 | 候选池过滤 + 匈牙利算法最优指派，最多 200 候选 |
 | `detector.js` | 界面检测 | 六参数必填/范围、五种路由、图片签名、模块置信度 |
 | `chemicalbook.js` | 参考检索 | 20 s 超时、128 条内存缓存、人机验证识别、四级解析 |
@@ -226,6 +228,15 @@ PubChem：
 - 使用匈牙利算法求全局最优指派，避免贪心错配。
 - 当前仅提供接口能力，前端未暴露入口。
 
+### 7.7 实测对比（compare.js）
+
+- 输入当前模拟峰与实测峰；实测 `tr_min` 必填，`width_min`、`resolution_prev`、`plates` 与柱压可选。
+- 按组分名称匹配：未录入峰标记 `missing`，模拟中不存在的实测峰标记 `unmatched`。
+- 逐峰输出 `ΔtR`、`%RE`、实测/模拟 `k`、`ΔRs`、塔板数与通过状态；保留判定为 `|%RE| ≤ 5%` 或 `|ΔtR| ≤ 0.2 min`，分离度判定为 `|ΔRs| ≤ 0.3`。
+- 汇总 `bias`、`MAE`、`RMSE`、`MAPE`、Bland-Altman 95% 界限、数据覆盖率、顺序一致率与 Rs 通过率。
+- 评级：覆盖率 ≥ 80%、顺序一致率 ≥ 90%、通过率 ≥ 80% 且 Rs 通过率 ≥ 80% 为 A；覆盖率 ≥ 60%、顺序一致率 ≥ 70%、通过率 ≥ 50% 为 B；覆盖不足 60% 或有效峰少于 2 个时暂不评级。
+- 前端在录入后自动调用对比接口；实测数据与条件指纹存入 `localStorage`，条件变化时保留数据但提示重新录入。
+
 ---
 
 ## 8. API 一览
@@ -248,6 +259,7 @@ PubChem：
 | GET/POST | `/api/ai/status` | 是 | 查看/保存模型配置 |
 | POST | `/api/ai/test` | 是 | 连通性测试 |
 | POST | `/api/simulate` | 是 | 色谱模拟 |
+| POST | `/api/compare` | 是 | 模拟结果与实测峰对比、偏差统计与评级 |
 | POST | `/api/recommend` | 是 | 方法设计 |
 | POST | `/api/identify` | 是 | 未知峰识别 |
 | POST | `/api/interface/detect` | 否 | 模拟界面检测 |
@@ -263,7 +275,7 @@ PubChem：
 - **状态**：`state` 保存组分、条件、视图、账户、文献、AI 配置与检测状态；派生数据按需计算，不做双向绑定。
 - **视图控制**：`setTab(view)` 切换 `sim / ai / lit / cb / detect`，各视图懒加载数据（文献、收藏等）。
 - **持久化**：
-  - `localStorage` 保存方法参数与界面偏好，刷新后恢复。
+  - `localStorage` 保存方法参数、界面偏好与实测对比录入值，刷新后恢复。
   - AI Key 仅存 `sessionStorage`，关闭标签页即清除；账户级配置存服务端。
 - **登录门**：未登录时显示统一入口，登录成功后按账户偏好与收藏恢复工作区。
 - **绘图**：`chart.js` 使用 Canvas 绘制曲线、梯度背景、峰标注与十字准星，无第三方图表库。
@@ -315,7 +327,7 @@ PubChem：
 
 ```bash
 npm start          # 本地直接运行（默认 8000）
-npm test           # 10 项后端测试
+npm test           # 32 项后端测试
 npm run build      # 执行 build.sh，生成 dist/
 ```
 
@@ -345,7 +357,7 @@ dist/
 
 ## 13. 测试覆盖（tests/merged.test.js）
 
-14 项测试覆盖关键不变量：
+32 项测试覆盖关键不变量，主要包括：
 
 1. ChemicalBook 检索页字段解析（含缺失字段为 `null`）。
 2. 详情页性质映射与摘要提取。
@@ -361,6 +373,11 @@ dist/
 12. UV 随波长变化而 RID 保持通用响应。
 13. 狭缝带宽与 FLD 激发波长会改变响应。
 14. 各检测器输出对应提示。
+15. 实测峰与模拟一致时返回 A 级、零偏差与满覆盖率。
+16. 系统性保留偏移会降低评级并给出校准提示。
+17. 出峰顺序颠倒会被顺序一致率识别。
+18. 未录入峰与未匹配峰分别标记，覆盖不足时暂不评级。
+19. 实测值非法或峰名重复会被拒绝。
 
 ---
 
@@ -372,6 +389,7 @@ dist/
 - 方法设计在无模型 Key 时完全依赖规则引擎，结果可复现但不具备大模型的开放性推理。
 - 未知峰识别仅提供 API，尚无前端入口。
 - 模拟与检测均为教学/方法开发用途的仿真，不替代实测。
+- 实测对比需人工录入峰数据，尚不支持直接读取仪器原始数据文件。
 
 ---
 

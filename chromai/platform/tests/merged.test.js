@@ -10,6 +10,7 @@ const { COMPOUNDS } = require('../lib/compounds');
 const aiClient = require('../lib/ai-client');
 const recommend = require('../lib/recommend');
 const literature = require('../lib/literature');
+const compare = require('../lib/compare');
 
 const SAMPLE = models.normalizeCompoundList([COMPOUNDS[0]]);
 
@@ -516,4 +517,96 @@ test('successful AI design survives the physics quality review', async () => {
     aiClient.chat = originalChat;
     literature.search = originalSearch;
   }
+});
+
+function comparePayload(measuredRows, pressure = 100) {
+  return {
+    predicted: {
+      peaks: [
+        { name: 'A', tr_min: 2, k: 1, width_min: 0.05, plates: 5000, resolution_prev: null, visible: true },
+        { name: 'B', tr_min: 4, k: 3, width_min: 0.06, plates: 5200, resolution_prev: 1.5, visible: true },
+        { name: 'C', tr_min: 6, k: 5, width_min: 0.07, plates: 5400, resolution_prev: 2.2, visible: true },
+      ],
+      metrics: { t0_min: 1, pressure_bar: 100 },
+    },
+    measured: { peaks: measuredRows, pressure_bar: pressure },
+  };
+}
+
+test('compare returns an A grade when measured peaks match the simulation', () => {
+  const result = compare.compareResults(comparePayload([
+    { name: 'A', tr_min: 2.02, width_min: 0.05, plates: 4950, resolution_prev: null },
+    { name: 'B', tr_min: 4.03, width_min: 0.06, plates: 5150, resolution_prev: 1.55 },
+    { name: 'C', tr_min: 6.01, width_min: 0.07, plates: 5350, resolution_prev: 2.15 },
+  ]));
+  assert.equal(result.grade, 'A');
+  assert.equal(result.matched, 3);
+  assert.equal(result.coverage, 1);
+  assert.equal(result.order_accuracy, 1);
+  assert.equal(result.pass_rate, 1);
+  assert.equal(result.rs_pairs, 2);
+  assert.equal(result.rs_pass_rate, 1);
+  assert.ok(Math.abs(result.bias_min) < 0.03);
+  assert.ok(result.rows.every((row) => row.status === 'good'));
+  assert.match(result.notes.join(' '), /建议范围/);
+});
+
+test('compare flags a systematic retention shift and poor agreement', () => {
+  const result = compare.compareResults(comparePayload([
+    { name: 'A', tr_min: 2.4, resolution_prev: null },
+    { name: 'B', tr_min: 4.4, resolution_prev: 1.55 },
+    { name: 'C', tr_min: 6.4, resolution_prev: 2.15 },
+  ]));
+  assert.equal(result.grade, 'C');
+  assert.ok(result.bias_min > 0.35);
+  assert.equal(result.pass_rate, 0);
+  assert.ok(result.rows.every((row) => row.status === 'bad'));
+  assert.match(result.notes.join(' '), /晚于模拟/);
+});
+
+test('compare detects a reversed elution order', () => {
+  const result = compare.compareResults(comparePayload([
+    { name: 'B', tr_min: 2, resolution_prev: null },
+    { name: 'A', tr_min: 4, resolution_prev: 2.5 },
+    { name: 'C', tr_min: 6, resolution_prev: 2 },
+  ]));
+  assert.ok(result.order_accuracy < 0.7);
+  assert.equal(result.grade, 'C');
+  assert.match(result.notes.join(' '), /出峰顺序/);
+});
+
+test('compare marks missing and unmatched measured peaks', () => {
+  const result = compare.compareResults(comparePayload([
+    { name: 'A', tr_min: 2.02, resolution_prev: null },
+    { name: 'B', tr_min: 4.02, resolution_prev: 1.5 },
+    { name: 'Unknown', tr_min: 8, resolution_prev: 2 },
+  ]));
+  assert.equal(result.matched, 2);
+  assert.equal(result.coverage, 0.667);
+  assert.ok(result.rows.some((row) => row.status === 'missing'));
+  assert.ok(result.rows.some((row) => row.status === 'unmatched'));
+  assert.equal(result.grade, 'B');
+});
+
+test('compare withholds a grade until enough peaks are covered', () => {
+  const result = compare.compareResults(comparePayload([
+    { name: 'A', tr_min: 2.02, resolution_prev: null },
+  ]));
+  assert.equal(result.grade, null);
+  assert.equal(result.grade_label, '数据不足');
+  assert.match(result.notes.join(' '), /暂不评级/);
+});
+
+test('compare rejects invalid measured values and duplicate names', () => {
+  assert.throws(
+    () => compare.compareResults(comparePayload([{ name: 'A', tr_min: 0 }])),
+    /tr_min/,
+  );
+  assert.throws(
+    () => compare.compareResults(comparePayload([
+      { name: 'A', tr_min: 2 },
+      { name: 'A', tr_min: 3 },
+    ])),
+    /名称重复/,
+  );
 });

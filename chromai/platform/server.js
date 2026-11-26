@@ -19,6 +19,7 @@ const auth = require('./lib/auth');
 const store = require('./lib/store');
 const chemicalbook = require('./lib/chemicalbook');
 const detector = require('./lib/detector');
+const compare = require('./lib/compare');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const STATIC_DIR = path.join(PUBLIC_DIR, 'static');
@@ -298,6 +299,7 @@ async function handleApi(req, res, pathname) {
 
   const protectedPaths = [
     '/api/simulate',
+    '/api/compare',
     '/api/recommend',
     '/api/identify',
     '/api/ai/test',
@@ -532,6 +534,18 @@ async function handleApi(req, res, pathname) {
     } catch (err) {
       return sendError(res, 500, `模拟失败：${err.message || err}`);
     }
+    return sendJson(res, 200, result);
+  }
+
+  if (pathname === '/api/compare') {
+    if (method !== 'POST') {
+      return sendError(res, 405, 'Method Not Allowed');
+    }
+    const body = await readJsonBody(req);
+    if (!models.isPlainObject(body)) {
+      throw new models.ValidationError('请求体必须是 JSON 对象');
+    }
+    const result = compare.compareResults(body);
     return sendJson(res, 200, result);
   }
 

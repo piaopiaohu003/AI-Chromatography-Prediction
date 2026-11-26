@@ -273,6 +273,7 @@ const state = {
   compounds: [],
   conditions: DEFAULT_CONDITIONS(),
   result: null,
+  compare: { rows: {}, pressure_bar: "", signature: "", last: null },
   simBusy: false,
   tab: "sim",
   aiConfig: { base_url: "", model: "", api_key: "" },
@@ -308,6 +309,8 @@ const state = {
 const charts = { sim: null, ai: null };
 let simTimer = null;
 let simAbort = null;
+let compareTimer = null;
+let compareAbort = null;
 let libraryTimer = null;
 let libraryAbort = null;
 let librarySeq = 0;
@@ -412,6 +415,11 @@ function persist() {
     tab: state.tab,
     aiConstraints: state.aiConstraints,
     aiConfig: { ...state.aiConfig, api_key: "" },
+    compare: {
+      rows: state.compare.rows,
+      pressure_bar: state.compare.pressure_bar,
+      signature: state.compare.signature,
+    },
   };
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -432,6 +440,16 @@ function restore() {
         ...(raw.aiConstraints || {}),
       };
       state.aiConfig = { base_url: "", model: "", api_key: "", ...(raw.aiConfig || {}) };
+      if (raw.compare && typeof raw.compare === "object" && !Array.isArray(raw.compare)) {
+        state.compare = {
+          rows: raw.compare.rows && typeof raw.compare.rows === "object" && !Array.isArray(raw.compare.rows)
+            ? raw.compare.rows
+            : {},
+          pressure_bar: raw.compare.pressure_bar ?? "",
+          signature: typeof raw.compare.signature === "string" ? raw.compare.signature : "",
+          last: null,
+        };
+      }
       if (Array.isArray(raw.compounds)) {
         state.compounds = raw.compounds.filter((c) => c && c.id && c.name && typeof c.log_p === "number");
       }
@@ -1627,6 +1645,28 @@ function bindSimControls() {
     removeCompound(button.dataset.remove);
   });
 
+  const compareBody = $("#compare-table-body");
+  compareBody.addEventListener("input", (event) => {
+    const input = event.target.closest("[data-compare-field]");
+    if (!input) return;
+    const key = input.dataset.compareKey;
+    const field = input.dataset.compareField;
+    if (!state.compare.rows[key]) state.compare.rows[key] = {};
+    state.compare.rows[key][field] = input.value;
+    markCompareSignature(input.value);
+    persist();
+    scheduleCompare();
+  });
+  $("#compare-pressure").addEventListener("input", (event) => {
+    state.compare.pressure_bar = event.target.value;
+    markCompareSignature(event.target.value);
+    persist();
+    scheduleCompare();
+  });
+  $("#btn-compare-calc").addEventListener("click", () => runCompare());
+  $("#btn-compare-clear").addEventListener("click", clearCompare);
+  $("#btn-compare-export").addEventListener("click", exportCompare);
+
   $("#btn-reset-conditions").addEventListener("click", () => {
     state.conditions = DEFAULT_CONDITIONS();
     syncControls();
@@ -2442,6 +2482,7 @@ async function runSimulation() {
     renderPeakTable(result);
     renderWarnings(result.warnings);
     renderMetrics(result);
+    renderCompareTable(result);
     $("#peak-count").textContent = String(result.peaks.length);
     const gradient = state.conditions.mode === "gradient";
     const normal = state.conditions.phase === "normal";
@@ -2497,6 +2538,7 @@ function renderEmptySimulation() {
   $("#peak-count").textContent = "0";
   $("#metric-chips").innerHTML = "";
   $("#warnings").innerHTML = warningItem("添加组分并设置条件后，系统会在这里给出分离度与风险提示。", "ok");
+  renderCompareTable(null);
 }
 
 function renderPeakTable(result) {
@@ -2556,6 +2598,296 @@ function renderWarnings(warnings) {
     return;
   }
   wrap.innerHTML = unique.map((text) => warningItem(text)).join("");
+}
+
+/* ------------------------------------------------------------------ */
+/* measured vs simulated comparison                                    */
+/* ------------------------------------------------------------------ */
+
+function compareKey(peak) {
+  return peak.compound_id || peak.name;
+}
+
+function compareSignature() {
+  return JSON.stringify({
+    compounds: state.compounds.map((compound) => compound.id),
+    conditions: state.conditions,
+  });
+}
+
+function compareHasData() {
+  return Object.values(state.compare.rows)
+    .some((row) => row && String(row.tr_min ?? "").trim() !== "");
+}
+
+function markCompareSignature(value) {
+  if (!state.compare.signature && String(value ?? "").trim() !== "") {
+    state.compare.signature = compareSignature();
+  }
+}
+
+function setCompareNote(message) {
+  const node = $("#compare-note");
+  if (!node) return;
+  if (!message) {
+    node.textContent = "";
+    node.classList.add("hidden");
+    return;
+  }
+  node.textContent = message;
+  node.classList.remove("hidden");
+}
+
+function scheduleCompare(delay = 320) {
+  if (compareTimer) clearTimeout(compareTimer);
+  compareTimer = setTimeout(() => {
+    compareTimer = null;
+    runCompare();
+  }, delay);
+}
+
+function renderComparePlaceholder(message = "录入至少一个峰的实测保留时间后，这里会显示对比结果。") {
+  const grade = $("#compare-grade");
+  if (grade) {
+    grade.textContent = "—";
+    grade.className = "pill";
+  }
+  const summary = $("#compare-summary");
+  if (summary) summary.innerHTML = `<p class="hint">${escapeHtml(message)}</p>`;
+  setCompareNote("");
+  $$("#compare-table-body .compare-delta").forEach((cell) => { cell.textContent = "—"; });
+  $$("#compare-table-body .compare-status").forEach((cell) => {
+    cell.textContent = "—";
+    cell.className = "compare-status";
+  });
+}
+
+function renderCompareTable(result = state.result) {
+  const body = $("#compare-table-body");
+  if (!body) return;
+  const pressure = $("#compare-pressure");
+  if (pressure) pressure.value = state.compare.pressure_bar ?? "";
+  const visible = result && Array.isArray(result.peaks)
+    ? result.peaks.filter((peak) => peak.visible && peak.tr_min !== null)
+    : [];
+  if (!visible.length) {
+    body.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:22px">暂无模拟峰，添加组分后即可录入实测数据</td></tr>`;
+    renderComparePlaceholder("暂无可对比的模拟峰。");
+    return;
+  }
+  body.innerHTML = visible.map((peak, index) => {
+    const key = compareKey(peak);
+    const row = state.compare.rows[key] || {};
+    const input = (field, options = {}) => {
+      const min = options.min ?? 0;
+      return `<input class="compare-input" type="number" inputmode="decimal" step="${options.step || "0.001"}" min="${min}" data-compare-key="${escapeHtml(key)}" data-compare-field="${field}" value="${escapeHtml(row[field] ?? "")}" placeholder="${escapeHtml(options.placeholder ?? "")}">`;
+    };
+    return `
+      <tr data-compare-key="${escapeHtml(key)}" data-compare-name="${escapeHtml(peak.name)}">
+        <td>${index + 1}</td>
+        <td class="truncate" title="${escapeHtml(peak.name)}">${escapeHtml(peak.name)}</td>
+        <td>${fmt(peak.tr_min, 2)}</td>
+        <td>${peak.resolution_prev == null ? "—" : fmt(peak.resolution_prev, 2)}</td>
+        <td>${input("tr_min", { placeholder: fmt(peak.tr_min, 2) })}</td>
+        <td>${input("width_min", { placeholder: peak.width_min == null ? "" : fmt(peak.width_min, 3) })}</td>
+        <td>${input("resolution_prev", { step: "0.01", min: -100, placeholder: peak.resolution_prev == null ? "" : fmt(peak.resolution_prev, 2) })}</td>
+        <td>${input("plates", { step: "1", placeholder: peak.plates == null ? "" : String(peak.plates) })}</td>
+        <td class="compare-delta">—</td>
+        <td class="compare-status">—</td>
+      </tr>`;
+  }).join("");
+  if (state.compare.last) {
+    applyCompareRows(state.compare.last);
+    renderCompareSummary(state.compare.last);
+  } else {
+    renderComparePlaceholder();
+  }
+  if (compareHasData()) scheduleCompare(120);
+}
+
+function measuredPeaksFromInputs() {
+  if (!state.result || !Array.isArray(state.result.peaks)) return [];
+  return state.result.peaks
+    .filter((peak) => peak.visible && peak.tr_min !== null)
+    .map((peak) => {
+      const row = state.compare.rows[compareKey(peak)] || {};
+      const tr = Number(row.tr_min);
+      if (!String(row.tr_min ?? "").trim() || !Number.isFinite(tr) || tr <= 0) return null;
+      const measured = { name: peak.name, tr_min: tr };
+      ["width_min", "resolution_prev", "plates"].forEach((field) => {
+        if (String(row[field] ?? "").trim() === "") return;
+        const value = Number(row[field]);
+        if (Number.isFinite(value)) measured[field] = value;
+      });
+      return measured;
+    })
+    .filter(Boolean);
+}
+
+async function runCompare() {
+  if (!state.result) return;
+  const peaks = measuredPeaksFromInputs();
+  if (!peaks.length) {
+    renderComparePlaceholder();
+    return;
+  }
+  if (compareAbort) compareAbort.abort();
+  const controller = new AbortController();
+  compareAbort = controller;
+  const pressureText = String(state.compare.pressure_bar ?? "").trim();
+  try {
+    const data = await postJSON("/api/compare", {
+      predicted: { peaks: state.result.peaks, metrics: state.result.metrics },
+      measured: {
+        peaks,
+        pressure_bar: pressureText === "" ? null : Number(pressureText),
+      },
+    }, controller.signal);
+    if (compareAbort !== controller) return;
+    state.compare.last = data;
+    applyCompareRows(data);
+    renderCompareSummary(data);
+  } catch (err) {
+    if (err.name === "AbortError") return;
+    const grade = $("#compare-grade");
+    if (grade) {
+      grade.textContent = "—";
+      grade.className = "pill";
+    }
+    $("#compare-summary").innerHTML = `<p class="hint">对比计算失败：${escapeHtml(err.message)}</p>`;
+  } finally {
+    if (compareAbort === controller) compareAbort = null;
+  }
+}
+
+function applyCompareRows(data) {
+  const byName = new Map((data.rows || []).map((row) => [row.name, row]));
+  $$("#compare-table-body tr[data-compare-name]").forEach((tr) => {
+    const row = byName.get(tr.dataset.compareName);
+    const deltaCell = tr.querySelector(".compare-delta");
+    const statusCell = tr.querySelector(".compare-status");
+    if (!row) {
+      if (deltaCell) deltaCell.textContent = "—";
+      if (statusCell) {
+        statusCell.textContent = "—";
+        statusCell.className = "compare-status";
+      }
+      return;
+    }
+    if (deltaCell) {
+      if (row.delta_tr_min == null) {
+        deltaCell.textContent = "—";
+      } else {
+        const sign = row.delta_tr_min >= 0 ? "+" : "";
+        const pct = row.percent_error == null
+          ? ""
+          : ` / ${row.percent_error >= 0 ? "+" : ""}${fmt(row.percent_error, 1)}%`;
+        deltaCell.textContent = `${sign}${fmt(row.delta_tr_min, 2)}${pct}`;
+      }
+    }
+    if (statusCell) {
+      statusCell.textContent = row.label;
+      statusCell.className = `compare-status status-${row.status}`;
+    }
+  });
+}
+
+function renderCompareSummary(data) {
+  const grade = $("#compare-grade");
+  if (grade) {
+    grade.textContent = data.grade || "—";
+    grade.className = data.grade ? `pill grade-${String(data.grade).toLowerCase()}` : "pill";
+  }
+  const signed = (value, digits = 2) => (
+    value == null ? "—" : `${value >= 0 ? "+" : ""}${fmt(value, digits)}`
+  );
+  const metric = (label, value) => `<div class="compare-metric"><span>${escapeHtml(label)}</span><b>${value}</b></div>`;
+  const pressure = data.pressure || {};
+  const pressureText = pressure.predicted_bar == null && pressure.measured_bar == null
+    ? "—"
+    : `${fmt(pressure.predicted_bar, 0)} / ${fmt(pressure.measured_bar, 0)} bar`;
+  const pressureDelta = pressure.percent_error == null
+    ? ""
+    : ` (${signed(pressure.percent_error, 1)}%)`;
+  const rsRate = data.rs_pass_rate == null ? "—" : `${Math.round(data.rs_pass_rate * 100)}%`;
+  const loa = data.loa_lower_min == null
+    ? "—"
+    : `${signed(data.loa_lower_min)} ~ ${signed(data.loa_upper_min)} min`;
+  $("#compare-summary").innerHTML = `
+    <div class="compare-metrics">
+      ${metric("数据覆盖", `${data.matched}/${data.predicted_count}`)}
+      ${metric("顺序一致率", `${Math.round(data.order_accuracy * 100)}%`)}
+      ${metric("平均偏差", `${signed(data.bias_min)} min`)}
+      ${metric("MAE", `${fmt(data.mae_min, 2)} min`)}
+      ${metric("RMSE", `${fmt(data.rmse_min, 2)} min`)}
+      ${metric("MAPE", `${fmt(data.mape_percent, 1)}%`)}
+      ${metric("95% LoA", loa)}
+      ${metric("Rs 通过率", rsRate)}
+      ${metric("柱压 模拟/实测", `${pressureText}${pressureDelta}`)}
+    </div>
+    <ul class="compare-notes">
+      ${(data.notes || []).map((note) => `<li>${escapeHtml(note)}</li>`).join("")}
+    </ul>
+  `;
+  setCompareNote(
+    state.compare.signature && state.compare.signature !== compareSignature()
+      ? "实测数据录入后色谱条件已变化，当前对比仅作参考；建议清空后按当前条件重新录入。"
+      : "",
+  );
+}
+
+function clearCompare() {
+  if (compareTimer) {
+    clearTimeout(compareTimer);
+    compareTimer = null;
+  }
+  if (compareAbort) {
+    compareAbort.abort();
+    compareAbort = null;
+  }
+  state.compare = { rows: {}, pressure_bar: "", signature: "", last: null };
+  persist();
+  renderCompareTable(state.result);
+  toast("已清空实测数据", "ok");
+}
+
+function exportCompare() {
+  const data = state.compare.last;
+  if (!data) {
+    toast("请先录入实测数据并计算对比", "err");
+    return;
+  }
+  const quote = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const header = [
+    "name", "predicted_tr_min", "measured_tr_min", "delta_tr_min", "percent_error",
+    "predicted_rs", "measured_rs", "delta_rs", "predicted_plates", "measured_plates", "status",
+  ];
+  const rows = (data.rows || []).map((row) => [
+    quote(row.name), row.predicted_tr_min ?? "", row.measured_tr_min ?? "",
+    row.delta_tr_min ?? "", row.percent_error ?? "", row.predicted_rs ?? "",
+    row.measured_rs ?? "", row.delta_rs ?? "", row.predicted_plates ?? "",
+    row.measured_plates ?? "", quote(row.label),
+  ].join(","));
+  const summary = [
+    [quote("ChromAI 实测对比")],
+    [quote("评级"), quote(data.grade ? `${data.grade} ${data.grade_label}` : data.grade_label)],
+    [quote("数据覆盖"), quote(`${data.matched}/${data.predicted_count}`)],
+    [quote("顺序一致率"), quote(`${Math.round(data.order_accuracy * 100)}%`)],
+    [quote("MAE (min)"), data.mae_min ?? ""],
+    [quote("RMSE (min)"), data.rmse_min ?? ""],
+    [quote("MAPE (%)"), data.mape_percent ?? ""],
+    [],
+    header,
+  ].map((line) => line.join(","));
+  const csv = [...summary, ...rows].join("\n");
+  const blob = new Blob([`\ufeff${csv}`], { type: "text/csv;charset=utf-8" });
+  const link = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  link.href = URL.createObjectURL(blob);
+  link.download = `chromai-compare-${stamp}.csv`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+  toast("实测对比已导出", "ok");
 }
 
 /* ------------------------------------------------------------------ */
