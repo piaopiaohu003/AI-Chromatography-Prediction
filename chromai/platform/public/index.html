@@ -140,9 +140,10 @@
           <div class="quick-search">
             <div class="search-box">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
-              <input type="text" id="quick-search" placeholder="搜索并添加化合物，支持 PubChem 在线…" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="quick-results" aria-autocomplete="list">
+              <input type="text" id="quick-search" placeholder="搜索并添加组分，支持 PubChem 与 ChemicalBook…" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="quick-results" aria-autocomplete="list">
             </div>
             <div class="quick-results hidden" id="quick-results" role="listbox" aria-label="化合物搜索结果"></div>
+            <button class="text-btn quick-cb-link" id="btn-quick-cb" type="button">在「化合物检索」中查看 ChemicalBook 完整记录 →</button>
           </div>
           <div class="compound-list" id="compound-list"></div>
         </section>
@@ -569,7 +570,10 @@
         <section class="card" id="cb-detail-card">
           <div class="card-head">
             <h2>化合物档案</h2>
-            <a class="text-btn hidden" id="cb-external" href="#" target="_blank" rel="noopener">在 ChemicalBook 打开</a>
+            <div class="cb-head-actions">
+              <button class="primary-btn small hidden" id="cb-add-sample" type="button">加入样品与目标</button>
+              <a class="text-btn hidden" id="cb-external" href="#" target="_blank" rel="noopener">在 ChemicalBook 打开</a>
+            </div>
           </div>
           <div id="cb-detail"></div>
         </section>
@@ -781,6 +785,7 @@
           </div>
           <div class="filter-chips" id="library-categories"></div>
         </div>
+        <button class="text-btn library-cb-link" id="btn-library-cb" type="button">在「化合物检索」中查看 ChemicalBook 完整档案 →</button>
         <div class="library-status" id="library-status"></div>
         <div class="library-grid" id="library-grid"></div>
 

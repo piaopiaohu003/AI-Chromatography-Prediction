@@ -1633,3 +1633,29 @@ input[type="range"]::-moz-range-thumb {
 .detect-plot svg { display: block; width: 100%; height: auto; }
 .detect-chips { justify-content: flex-start; margin-bottom: 12px; }
 .detect-chips:empty { display: none; }
+
+/* ---------------- cross-view compound search ---------------- */
+.qr-tag.cb { color: var(--teal); background: rgba(45, 212, 191, 0.1); border-color: rgba(45, 212, 191, 0.28); }
+.quick-status.warn { color: var(--amber, #f5b544); }
+.quick-cb-link {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 10.5px;
+  text-align: left;
+  text-decoration: none;
+}
+.cb-head-actions { display: flex; align-items: center; gap: 10px; }
+.cb-head-actions .primary-btn.small { width: auto; padding: 7px 14px; }
+.cb-head-actions .primary-btn[disabled] { opacity: 0.55; cursor: default; }
+
+.library-item .cat-tag.reference {
+  color: var(--teal);
+  background: rgba(45, 212, 191, 0.1);
+  border-color: rgba(45, 212, 191, 0.28);
+}
+.library-cb-link {
+  display: inline-block;
+  margin: 0 0 8px;
+  font-size: 10.5px;
+  text-align: left;
+}

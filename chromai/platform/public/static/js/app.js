@@ -272,6 +272,7 @@ const state = {
   libraryCategory: "全部",
   librarySearch: "",
   onlineLibrary: [],
+  cbLibrary: [],
   user: null,
   account: {
     preferences: { ...DEFAULT_PREFERENCES },
@@ -298,10 +299,17 @@ let simAbort = null;
 let libraryTimer = null;
 let libraryAbort = null;
 let librarySeq = 0;
-const quickSearch = { query: "", online: [], active: -1, loading: false };
+let libraryCbAbort = null;
+let libraryCbSeq = 0;
+let libraryLoading = false;
+let libraryCbLoading = false;
+let libraryCbError = "";
+const quickSearch = { query: "", online: [], cb: [], cbError: "", cbLoading: false, active: -1, loading: false };
 let quickTimer = null;
 let quickAbort = null;
 let quickSeq = 0;
+let quickCbAbort = null;
+let quickCbSeq = 0;
 let lastAiError = "";
 
 /* ------------------------------------------------------------------ */
@@ -2213,6 +2221,7 @@ function compoundMeta(compound) {
   const parts = [`logP ${fmt(compound.log_p, 1)}`];
   if (compound.pka != null) parts.push(`pKa ${fmt(compound.pka, 1)}`);
   if (compound.lambda_max_nm) parts.push(`λ${Math.round(compound.lambda_max_nm)}`);
+  if (compound.estimated) parts.push("估算");
   return parts.join(" · ");
 }
 
@@ -2760,6 +2769,17 @@ function setSettingsStatus(text, kind) {
 
 function bindLibrary() {
   $("#btn-add-compound").addEventListener("click", openLibrary);
+  $("#btn-library-cb").addEventListener("click", () => {
+    const query = String($("#library-search").value || "").trim();
+    $("#modal-library").classList.add("hidden");
+    setTab("cb");
+    if (query) {
+      $("#cb-query").value = query;
+      searchChemicalBook(query);
+    } else {
+      $("#cb-query").focus();
+    }
+  });
   $("#library-search").addEventListener("input", (event) => {
     const query = event.target.value.trim();
     state.librarySearch = query.toLowerCase();
@@ -2788,25 +2808,27 @@ function bindLibrary() {
     }
     let added = 0;
     let estimated = 0;
+    let reference = 0;
     state.librarySelection.forEach((id) => {
       if (state.compounds.some((c) => c.id === id)) return;
       const item = state.library.find((c) => c.id === id)
-        || state.onlineLibrary.find((c) => c.id === id);
+        || state.onlineLibrary.find((c) => c.id === id)
+        || state.cbLibrary.find((c) => c.id === id);
       if (item) {
         state.compounds.push({ ...item, concentration_mg_l: 100 });
         added += 1;
         if (item.estimated) estimated += 1;
+        if (item.source === "chemicalbook") reference += 1;
       }
     });
     state.librarySelection.clear();
     $("#modal-library").classList.add("hidden");
     onCompoundsChanged();
-    toast(
-      estimated
-        ? `已添加 ${added} 个组分，其中 ${estimated} 个在线参数为估算值`
-        : `已添加 ${added} 个组分`,
-      "ok",
-    );
+    const suffix = [
+      estimated ? `其中 ${estimated} 个参数为估算值` : "",
+      reference ? `含 ${reference} 个 ChemicalBook 参考记录` : "",
+    ].filter(Boolean).join("，");
+    toast(suffix ? `已添加 ${added} 个组分，${suffix}` : `已添加 ${added} 个组分`, "ok");
   });
   $("#btn-add-custom").addEventListener("click", addCustomCompound);
 }
@@ -2855,7 +2877,8 @@ function bindQuickSearch() {
     if (!row) return;
     const id = row.dataset.quickId;
     const item = state.library.find((c) => c.id === id)
-      || quickSearch.online.find((c) => c.id === id);
+      || quickSearch.online.find((c) => c.id === id)
+      || quickSearch.cb.find((c) => c.id === id);
     if (item) addQuickCompound(item);
   });
 
@@ -2875,7 +2898,12 @@ function quickMatches() {
   const localNames = new Set(local.map((item) => String(item.name_en || item.name).toLowerCase()));
   const online = quickSearch.online.filter((item) =>
     !seen.has(item.id) && !localNames.has(String(item.name_en || item.name).toLowerCase()));
-  return local.concat(online).slice(0, 12);
+  const onlineNames = new Set(online.map((item) => String(item.name_en || item.name).toLowerCase()));
+  const chemicalbook = quickSearch.cb.filter((item) => {
+    if (seen.has(item.id) || localNames.has(String(item.name_en || item.name).toLowerCase())) return false;
+    return !onlineNames.has(String(item.name_en || item.name).toLowerCase());
+  });
+  return local.concat(online, chemicalbook).slice(0, 14);
 }
 
 function renderQuickResults() {
@@ -2890,23 +2918,38 @@ function renderQuickResults() {
   const rows = items.map((item, index) => {
     const added = state.compounds.some((c) => c.id === item.id);
     const online = item.source === "pubchem";
+    const reference = item.source === "chemicalbook";
+    const tag = online ? '<span class="qr-tag">PubChem·估算</span>'
+      : reference ? '<span class="qr-tag cb">ChemicalBook·估算</span>' : "";
+    const meta = [
+      item.name_en || item.id,
+      item.cas_number ? `CAS ${item.cas_number}` : "",
+      `logP ${fmt(item.log_p, 1)}`,
+      item.pka != null ? `pKa ${fmt(item.pka, 1)}` : "",
+    ].filter(Boolean).join(" · ");
     return `
       <div class="quick-result ${index === quickSearch.active ? "active" : ""} ${added ? "added" : ""}"
         role="option" aria-selected="${index === quickSearch.active}" data-quick-id="${escapeHtml(item.id)}">
         <div class="qr-main">
-          <div class="qr-name">${escapeHtml(item.name)}${online ? '<span class="qr-tag">PubChem·估算</span>' : ""}</div>
-          <div class="qr-meta">${escapeHtml(item.name_en || item.id)} · logP ${fmt(item.log_p, 1)}${item.pka != null ? ` · pKa ${fmt(item.pka, 1)}` : ""}</div>
+          <div class="qr-name">${escapeHtml(item.name)}${tag}</div>
+          <div class="qr-meta">${escapeHtml(meta)}</div>
         </div>
         <span class="qr-add">${added ? "已添加" : "添加"}</span>
       </div>
     `;
   }).join("");
-  const status = quickSearch.loading
-    ? '<div class="quick-status">正在检索 PubChem…</div>'
-    : (!items.length
-      ? `<div class="quick-status">未找到匹配化合物${quickSearch.query.length < 2 ? "，输入 2 个字符以上可检索 PubChem" : ""}</div>`
+  const loading = quickSearch.loading || quickSearch.cbLoading;
+  const sources = [quickSearch.loading ? "PubChem" : "", quickSearch.cbLoading ? "ChemicalBook" : ""]
+    .filter(Boolean).join(" 与 ");
+  const status = loading
+    ? `<div class="quick-status">正在检索 ${sources}…</div>`
+    : (!items.length && !quickSearch.cbError
+      ? `<div class="quick-status">未找到匹配化合物${quickSearch.query.length < 2 ? "，输入 2 个字符以上可检索在线数据库" : ""}</div>`
       : "");
-  box.innerHTML = rows + status;
+  const warning = quickSearch.cbError && !loading
+    ? `<div class="quick-status warn">${escapeHtml(quickSearch.cbError)}，仍可使用 PubChem 与本地结果</div>`
+    : "";
+  box.innerHTML = rows + status + warning;
   box.classList.remove("hidden");
   input.setAttribute("aria-expanded", "true");
 }
@@ -2922,16 +2965,25 @@ function closeQuickResults() {
 function scheduleQuickOnline(query) {
   clearTimeout(quickTimer);
   if (quickAbort) quickAbort.abort();
+  if (quickCbAbort) quickCbAbort.abort();
   quickSearch.online = [];
+  quickSearch.cb = [];
+  quickSearch.cbError = "";
   quickSearch.loading = false;
+  quickSearch.cbLoading = false;
   quickSeq += 1;
+  quickCbSeq += 1;
   if (query.length < 2) {
     renderQuickResults();
     return;
   }
   quickSearch.loading = true;
+  quickSearch.cbLoading = true;
   renderQuickResults();
-  quickTimer = setTimeout(() => runQuickOnline(query), 350);
+  quickTimer = setTimeout(() => {
+    runQuickOnline(query);
+    runQuickChemicalBook(query);
+  }, 350);
 }
 
 async function runQuickOnline(query) {
@@ -2957,26 +3009,65 @@ async function runQuickOnline(query) {
   }
 }
 
-function addQuickCompound(item) {
+async function runQuickChemicalBook(query) {
+  const seq = ++quickCbSeq;
+  quickCbAbort = new AbortController();
+  try {
+    const res = await fetch(
+      `/api/compounds/search?q=${encodeURIComponent(query)}&source=chemicalbook&limit=6`,
+      { signal: quickCbAbort.signal },
+    );
+    const data = await res.json().catch(() => ({}));
+    if (seq !== quickCbSeq) return;
+    if (res.status === 502 || (data.error && data.error.code === "upstream_unavailable")) {
+      quickSearch.cb = [];
+      quickSearch.cbError = "ChemicalBook 暂不可用";
+    } else if (!res.ok) {
+      quickSearch.cb = [];
+      quickSearch.cbError = "ChemicalBook 检索失败";
+    } else {
+      quickSearch.cb = (data.matches || []).map(chemicalBookCompound);
+      quickSearch.cbError = "";
+    }
+    quickSearch.cbLoading = false;
+    quickSearch.active = Math.min(quickSearch.active, quickMatches().length - 1);
+    renderQuickResults();
+  } catch (err) {
+    if (err.name === "AbortError") return;
+    if (seq !== quickCbSeq) return;
+    quickSearch.cb = [];
+    quickSearch.cbError = "ChemicalBook 暂不可用";
+    quickSearch.cbLoading = false;
+    renderQuickResults();
+  }
+}
+
+function pushSampleCompound(item) {
   if (state.compounds.some((c) => c.id === item.id)) {
     toast("该组分已在样品中");
-    return;
+    return false;
   }
   if (state.compounds.length >= 20) {
     toast("样品组分已达上限 20 个", "err");
-    return;
+    return false;
   }
   state.compounds.push({ ...item, concentration_mg_l: 100 });
+  onCompoundsChanged();
+  return true;
+}
+
+function addQuickCompound(item) {
+  if (!pushSampleCompound(item)) return;
   quickSearch.query = "";
   quickSearch.online = [];
+  quickSearch.cb = [];
   const input = $("#quick-search");
   if (input) input.value = "";
   closeQuickResults();
-  onCompoundsChanged();
-  toast(
-    item.estimated ? `已添加「${item.name}」，在线参数为估算值` : `已添加「${item.name}」`,
-    "ok",
-  );
+  const suffix = item.source === "chemicalbook"
+    ? "，ChemicalBook 参考参数为估算值，建议在方法中复核"
+    : item.estimated ? "，在线参数为估算值" : "";
+  toast(`已添加「${item.name}」${suffix}`, "ok");
 }
 
 function openLibrary() {
@@ -2984,8 +3075,13 @@ function openLibrary() {
   state.libraryCategory = "全部";
   state.librarySearch = "";
   state.onlineLibrary = [];
+  state.cbLibrary = [];
+  libraryLoading = false;
+  libraryCbLoading = false;
+  libraryCbError = "";
   clearTimeout(libraryTimer);
   if (libraryAbort) libraryAbort.abort();
+  if (libraryCbAbort) libraryCbAbort.abort();
   $("#library-search").value = "";
   setLibraryStatus("");
   renderCategoryChips();
@@ -3003,14 +3099,77 @@ function setLibraryStatus(text, kind = "") {
 function scheduleLibrarySearch(query) {
   clearTimeout(libraryTimer);
   if (libraryAbort) libraryAbort.abort();
+  if (libraryCbAbort) libraryCbAbort.abort();
   if (query.length < 2) {
     state.onlineLibrary = [];
+    state.cbLibrary = [];
+    libraryLoading = false;
+    libraryCbLoading = false;
+    libraryCbError = "";
     setLibraryStatus("");
     renderLibrary();
     return;
   }
-  setLibraryStatus("正在检索在线化合物库…");
-  libraryTimer = setTimeout(() => runLibrarySearch(query), 350);
+  libraryLoading = true;
+  libraryCbLoading = true;
+  libraryCbError = "";
+  updateLibraryStatus();
+  libraryTimer = setTimeout(() => {
+    runLibrarySearch(query);
+    runLibraryChemicalBook(query);
+  }, 350);
+}
+
+function updateLibraryStatus() {
+  if (libraryLoading || libraryCbLoading) {
+    const sources = [libraryLoading ? "PubChem" : "", libraryCbLoading ? "ChemicalBook" : ""]
+      .filter(Boolean).join(" 与 ");
+    setLibraryStatus(`正在检索 ${sources}…`);
+    return;
+  }
+  const parts = [];
+  if (state.onlineLibrary.length) parts.push(`PubChem ${state.onlineLibrary.length} 个`);
+  if (state.cbLibrary.length) parts.push(`ChemicalBook ${state.cbLibrary.length} 个`);
+  if (!parts.length) {
+    setLibraryStatus(libraryCbError || "没有更多在线结果", libraryCbError ? "warn" : "");
+    return;
+  }
+  const suffix = libraryCbError ? ` · ${libraryCbError}` : "";
+  setLibraryStatus(`在线补充 ${parts.join(" · ")}，参数带“估算”标记${suffix}`, libraryCbError ? "warn" : "");
+}
+
+async function runLibraryChemicalBook(query) {
+  const seq = ++libraryCbSeq;
+  libraryCbAbort = new AbortController();
+  try {
+    const res = await fetch(
+      `/api/compounds/search?q=${encodeURIComponent(query)}&source=chemicalbook&limit=6`,
+      { signal: libraryCbAbort.signal },
+    );
+    const data = await res.json().catch(() => ({}));
+    if (seq !== libraryCbSeq) return;
+    if (res.status === 502 || (data.error && data.error.code === "upstream_unavailable")) {
+      state.cbLibrary = [];
+      libraryCbError = "ChemicalBook 暂不可用";
+    } else if (!res.ok) {
+      state.cbLibrary = [];
+      libraryCbError = "ChemicalBook 检索失败";
+    } else {
+      state.cbLibrary = (data.matches || []).map(chemicalBookCompound);
+      libraryCbError = "";
+    }
+    libraryCbLoading = false;
+    renderLibrary();
+    updateLibraryStatus();
+  } catch (err) {
+    if (err.name === "AbortError") return;
+    if (seq !== libraryCbSeq) return;
+    state.cbLibrary = [];
+    libraryCbError = "ChemicalBook 暂不可用";
+    libraryCbLoading = false;
+    renderLibrary();
+    updateLibraryStatus();
+  }
 }
 
 async function runLibrarySearch(query) {
@@ -3025,17 +3184,15 @@ async function runLibrarySearch(query) {
     const data = await res.json();
     if (seq !== librarySeq) return;
     state.onlineLibrary = data.online || [];
+    libraryLoading = false;
     renderLibrary();
-    if (data.online_error) {
-      setLibraryStatus(`在线数据库暂不可用：${data.online_error}`, "warn");
-    } else if (state.onlineLibrary.length) {
-      setLibraryStatus(`在线补充 ${state.onlineLibrary.length} 个化合物，参数带“估算”标记`);
-    } else {
-      setLibraryStatus("没有更多在线结果");
-    }
+    updateLibraryStatus();
   } catch (err) {
     if (err.name === "AbortError") return;
-    if (seq === librarySeq) setLibraryStatus(`在线搜索失败：${err.message}`, "warn");
+    if (seq !== librarySeq) return;
+    libraryLoading = false;
+    renderLibrary();
+    updateLibraryStatus();
   }
 }
 
@@ -3050,7 +3207,7 @@ function renderCategoryChips() {
 
 function renderLibrary() {
   const grid = $("#library-grid");
-  const filtered = state.library.concat(state.onlineLibrary).filter((item) => {
+  const filtered = state.library.concat(state.onlineLibrary, state.cbLibrary).filter((item) => {
     if (state.libraryCategory !== "全部" && item.category !== state.libraryCategory) return false;
     if (!state.librarySearch) return true;
     return `${item.name} ${item.name_en || ""} ${item.id} ${item.category || ""}`
@@ -3064,9 +3221,10 @@ function renderLibrary() {
       const added = state.compounds.some((c) => c.id === item.id);
       const selected = state.librarySelection.has(item.id);
       const online = item.source === "pubchem";
+      const reference = item.source === "chemicalbook";
       return `
         <div class="library-item ${selected ? "selected" : ""} ${added ? "added" : ""}" data-library-id="${escapeHtml(item.id)}">
-          <span class="cat-tag ${online ? "online" : ""}">${escapeHtml(online ? "PubChem" : item.category || "")}</span>
+          <span class="cat-tag ${online ? "online" : ""} ${reference ? "reference" : ""}">${escapeHtml(online ? "PubChem" : reference ? "ChemicalBook" : item.category || "")}</span>
           <h4>${escapeHtml(item.name)}</h4>
           <div class="en">${escapeHtml(item.name_en || "")}${added ? " · 已添加" : ""}</div>
           <div class="props">
@@ -3074,7 +3232,7 @@ function renderLibrary() {
             ${item.pka != null ? `<span>pKa ${fmt(item.pka, 1)}</span>` : ""}
             <span>λ${Math.round(item.lambda_max_nm)}</span>
           </div>
-          ${online ? `<div class="estimate-note">pKa/λ 为估算值</div>` : ""}
+          ${online || reference ? `<div class="estimate-note">${reference ? "ChemicalBook 参考参数为估算值" : "pKa/λ 为估算值"}</div>` : ""}
         </div>
       `;
     }).join("");
@@ -3180,6 +3338,42 @@ function cbSourceLabel(label) {
   return label;
 }
 
+function chemicalBookCompound(match) {
+  const name = match.name || "未命名化合物";
+  const cbNumber = match.cb_number || "";
+  const slug = String(name).toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "-").replace(/^-+|-+$/g, "");
+  return {
+    id: `chemicalbook-${cbNumber || slug || "record"}`,
+    name,
+    name_en: name,
+    category: "ChemicalBook",
+    log_p: 2.5,
+    pka: null,
+    acid_base: "neutral",
+    lambda_max_nm: 254,
+    concentration_mg_l: 100,
+    log_kw: null,
+    s_value: null,
+    epsilon_max: 1,
+    source: "chemicalbook",
+    estimated: true,
+    cas_number: match.cas_number || null,
+    molecular_formula: match.molecular_formula || null,
+    molecular_weight: match.molecular_weight || null,
+    cb_number: cbNumber || null,
+    detail_url: match.detail_url || null,
+  };
+}
+
+function addCbSelectedToSample() {
+  const selected = cbState.data && cbState.data.selected;
+  if (!selected) return;
+  const compound = chemicalBookCompound(selected);
+  if (!pushSampleCompound(compound)) return;
+  renderChemicalBook();
+  toast(`已将「${compound.name}」加入样品与目标，参考参数为估算值，请在模拟台复核`, "ok");
+}
+
 function bindChemicalBook() {
   const form = $("#cb-search-form");
   if (!form) return;
@@ -3196,6 +3390,21 @@ function bindChemicalBook() {
     if (!event.target.closest("#cb-retry")) return;
     searchChemicalBook(cbState.query);
   });
+  const addButton = $("#cb-add-sample");
+  if (addButton) addButton.addEventListener("click", addCbSelectedToSample);
+  const jump = $("#btn-quick-cb");
+  if (jump) {
+    jump.addEventListener("click", () => {
+      const query = String(($("#quick-search") || {}).value || "").trim();
+      setTab("cb");
+      if (query) {
+        $("#cb-query").value = query;
+        searchChemicalBook(query);
+      } else {
+        $("#cb-query").focus();
+      }
+    });
+  }
 }
 
 async function searchChemicalBook(query, cbNumber = null) {
@@ -3247,6 +3456,7 @@ function renderChemicalBook() {
   const count = $("#cb-match-count");
   const detail = $("#cb-detail");
   const external = $("#cb-external");
+  const addBtn = $("#cb-add-sample");
   const data = cbState.data;
 
   if (cbState.loading) {
@@ -3256,6 +3466,7 @@ function renderChemicalBook() {
     matchesNode.innerHTML = '<div class="loading-shimmer" style="height:56px"></div><div class="loading-shimmer" style="height:56px;margin-top:8px"></div>';
     detail.innerHTML = cbEmpty("正在读取检索结果与化合物档案…");
     external.classList.add("hidden");
+    if (addBtn) addBtn.classList.add("hidden");
     return;
   }
 
@@ -3271,6 +3482,7 @@ function renderChemicalBook() {
         <button class="ghost-btn" type="button" id="cb-retry">重试检索</button>
       </div>`;
     external.classList.add("hidden");
+    if (addBtn) addBtn.classList.add("hidden");
     return;
   }
 
@@ -3281,6 +3493,7 @@ function renderChemicalBook() {
     matchesNode.innerHTML = cbEmpty("输入名称或 CAS 号开始检索，结果会列出匹配记录。");
     detail.innerHTML = cbEmpty("选择左侧匹配记录后，在这里查看分子式、分子量、沸点与化合物摘要。");
     external.classList.add("hidden");
+    if (addBtn) addBtn.classList.add("hidden");
     return;
   }
 
@@ -3306,6 +3519,7 @@ function renderChemicalBook() {
   if (!selected) {
     detail.innerHTML = cbEmpty("上游返回了匹配列表，但未提供可用的化合物档案。");
     external.classList.add("hidden");
+    if (addBtn) addBtn.classList.add("hidden");
     return;
   }
 
@@ -3343,6 +3557,14 @@ function renderChemicalBook() {
     external.classList.remove("hidden");
   } else {
     external.classList.add("hidden");
+  }
+
+  if (addBtn) {
+    const compound = chemicalBookCompound(selected);
+    const added = state.compounds.some((c) => c.id === compound.id);
+    addBtn.classList.remove("hidden");
+    addBtn.disabled = added;
+    addBtn.textContent = added ? "已在样品中" : "加入样品与目标";
   }
 }
 
