@@ -409,12 +409,14 @@ async function handleApi(req, res, pathname) {
     }
     const url = new URL(req.url, 'http://localhost');
     const requested = Number.parseInt(url.searchParams.get('limit') || '15', 10);
+    const journalScope = String(url.searchParams.get('journals') || '').toLowerCase();
     try {
       const data = await literature.search(url.searchParams.get('q') || '', {
         limit: Number.isFinite(requested) ? requested : 15,
         sort: url.searchParams.get('sort') || 'relevance',
         from_year: url.searchParams.get('from_year') || null,
         to_year: url.searchParams.get('to_year') || null,
+        top_journals: ['1', 'true', 'yes'].includes(journalScope),
       });
       return sendJson(res, 200, data);
     } catch (err) {

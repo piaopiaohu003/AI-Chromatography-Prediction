@@ -1054,6 +1054,8 @@ function litSourceLabel(sources) {
   const names = [];
   if (sources?.europepmc === "ok") names.push("Europe PMC");
   if (sources?.crossref === "ok") names.push("Crossref");
+  if (sources?.openalex === "ok") names.push("OpenAlex");
+  if (sources?.openalex_journals === "ok") names.push("分析化学顶刊库");
   return names.join(" · ");
 }
 
@@ -1088,7 +1090,14 @@ function litCard(item) {
     item.cited_by != null ? `被引 ${item.cited_by}` : "",
   ].filter(Boolean);
   const tags = (item.sources || [])
-    .map((source) => `<span class="lit-tag">${source === "europepmc" ? "Europe PMC" : "Crossref"}</span>`)
+    .map((source) => {
+      const label = {
+        europepmc: "Europe PMC",
+        crossref: "Crossref",
+        openalex: "OpenAlex",
+      }[source] || source;
+      return `<span class="lit-tag">${escapeHtml(label)}</span>`;
+    })
     .join("");
   const link = safeHttpUrl(item.url);
   const abstract = item.abstract
@@ -1117,8 +1126,8 @@ function renderLitResults(label) {
   const note = $("#lit-source-note");
   if (note) {
     note.textContent = state.literature.fromWatch
-      ? "监控缓存 · Europe PMC / Crossref"
-      : (litSourceLabel(state.literature.sources) || "Europe PMC · Crossref");
+      ? "监控缓存 · Europe PMC / Crossref / OpenAlex"
+      : (litSourceLabel(state.literature.sources) || "Europe PMC · Crossref · OpenAlex");
   }
   const head = label
     ? `<div class="lit-result-head"><span>${escapeHtml(label)}</span><span>${results.length} 篇</span></div>`
@@ -1264,10 +1273,13 @@ async function runLiteratureSearch(query, options = {}) {
   state.literature.fromWatch = false;
   state.literature.activeTopic = null;
   renderLiteratureTopics();
-  renderLitStatus("正在检索 Europe PMC 与 Crossref…", "loading");
+  renderLitStatus("正在检索 Europe PMC、Crossref 与 OpenAlex…", "loading");
   $("#lit-result-count").textContent = "…";
   $("#lit-results").innerHTML = "";
-  const params = new URLSearchParams({ q, sort: state.literature.sort, limit: "15" });
+  const topJournals = $("#lit-top-journals")?.checked ? "1" : "0";
+  const params = new URLSearchParams({
+    q, sort: state.literature.sort, limit: "15", journals: topJournals,
+  });
   try {
     const data = await apiJSON(`/api/literature/search?${params.toString()}`);
     state.literature.results = Array.isArray(data.results) ? data.results : [];
@@ -2754,6 +2766,7 @@ function renderAIResult(result) {
       ${url
         ? `<a class="lit-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`
         : `<span>${escapeHtml(label)}</span>`}
+      ${item.top_journal ? '<span class="lit-tag ref-top">顶刊</span>' : ""}
       ${meta ? `<span class="lit-meta">${escapeHtml(meta)}</span>` : ""}
       ${item.note ? `<span class="ref-note">${escapeHtml(item.note)}</span>` : ""}
     </li>`;

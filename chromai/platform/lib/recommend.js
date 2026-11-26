@@ -17,7 +17,26 @@ const { pyRound, clamp, mean, maxOf, minOf } = require('./util');
 
 const PH_CANDIDATES = [2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.8, 7.5, 8.5, 9.5, 10.5];
 const LITERATURE_LIMIT = 6;
+const LITERATURE_POOL = 12;
 const LITERATURE_TIMEOUT_MS = 8000;
+
+/* Common synonyms improve recall for names that differ between regions or
+ * nomenclature systems (paracetamol / acetaminophen, vitamin C / ascorbic
+ * acid, ...). */
+const COMPOUND_SYNONYMS = {
+  acetaminophen: ['paracetamol', 'APAP'],
+  aspirin: ['acetylsalicylic acid'],
+  'ascorbic-acid': ['vitamin C'],
+  '2-4-d': ['2,4-dichlorophenoxyacetic acid', '2,4-D'],
+  'bisphenol-a': ['bisphenol A', 'BPA'],
+  'sorbic-acid': ['2,4-hexadienoic acid'],
+  riboflavin: ['vitamin B2'],
+  uracil: ['pyrimidine-2,4-dione'],
+  theophylline: ['1,3-dimethylxanthine'],
+};
+const TOP_JOURNAL_ISSNS = new Set(
+  literature.TOP_ANALYTICAL_JOURNALS.map((journal) => journal.issn),
+);
 const CHEMISTRY_LABELS = {
   c18: 'C18', silica: 'Silica', diol: 'Diol', amino: 'Amino',
 };
@@ -941,12 +960,26 @@ function coerceAiConditions(raw, fallback) {
  * timeout or upstream failure degrades to the property/principle-only prompt
  * instead of blocking method design. */
 
+function compoundSearchTerms(compound) {
+  const terms = [];
+  const primary = String(compound.name_en || compound.name || '').trim();
+  if (primary) terms.push(primary);
+  const synonyms = COMPOUND_SYNONYMS[String(compound.id || '').toLowerCase()] || [];
+  for (const synonym of synonyms) {
+    if (terms.length >= 2) break;
+    if (!terms.some((term) => term.toLowerCase() === synonym.toLowerCase())) terms.push(synonym);
+  }
+  return terms;
+}
+
 function literatureQuery(compounds, constraints = {}) {
+  /* Two analytes plus one synonym each is a good recall/precision balance:
+   * more names turn the query into an overly narrow phrase. */
   const names = [];
-  for (const compound of compounds) {
-    const name = String(compound.name_en || compound.name || '').trim();
-    if (name && !names.includes(name)) names.push(name);
-    if (names.length >= 3) break;
+  for (const compound of compounds.slice(0, 2)) {
+    for (const term of compoundSearchTerms(compound)) {
+      if (!names.some((name) => name.toLowerCase() === term.toLowerCase())) names.push(term);
+    }
   }
   if (!names.length) return '';
   let detectorTerm = 'HPLC';
@@ -956,7 +989,7 @@ function literatureQuery(compounds, constraints = {}) {
     ? 'normal phase separation'
     : 'reversed phase separation';
   const suffix = ` ${detectorTerm} ${phaseTerm}`;
-  const budget = Math.max(20, 160 - suffix.length);
+  const budget = Math.max(30, 160 - suffix.length);
   let nameText = '';
   for (const name of names) {
     const candidate = nameText ? `${nameText} ${name}` : name;
@@ -965,6 +998,51 @@ function literatureQuery(compounds, constraints = {}) {
   }
   if (!nameText) nameText = names[0].slice(0, budget).trim();
   return (nameText + suffix).trim();
+}
+
+function analyteTerms(compounds) {
+  const terms = [];
+  for (const compound of compounds) {
+    for (const term of compoundSearchTerms(compound)) {
+      const value = term.toLowerCase();
+      if (value.length >= 3 && !terms.includes(value)) terms.push(value);
+    }
+  }
+  return terms;
+}
+
+function referenceScore(item, terms) {
+  const title = String(item.title || '').toLowerCase();
+  const abstract = String(item.abstract || '').toLowerCase();
+  let titleHits = 0;
+  let abstractHits = 0;
+  for (const term of terms) {
+    if (title.includes(term)) titleHits += 1;
+    else if (abstract.includes(term)) abstractHits += 1;
+  }
+  if (!titleHits && !abstractHits) return 0;
+  const issns = Array.isArray(item.issns) ? item.issns : [];
+  const topJournal = issns.some((issn) => TOP_JOURNAL_ISSNS.has(issn))
+    || literature.isTopJournal(item.journal);
+  const recent = item.year && item.year >= new Date().getFullYear() - 8 ? 1 : 0;
+  const cited = Number.isFinite(Number(item.cited_by))
+    ? Math.min(2, Math.log10(Number(item.cited_by) + 1)) : 0;
+  return titleHits * 4 + abstractHits * 2
+    + (topJournal ? 2 : 0) + recent + cited;
+}
+
+function rankReferences(items, compounds) {
+  const terms = analyteTerms(compounds);
+  const scored = (items || []).map((item, index) => ({
+    item,
+    index,
+    score: referenceScore(item, terms),
+  }));
+  if (!scored.some((entry) => entry.score > 0)) {
+    return scored.map((entry) => entry.item);
+  }
+  scored.sort((a, b) => (b.score - a.score) || (a.index - b.index));
+  return scored.map((entry) => entry.item);
 }
 
 function compactReference(item, index) {
@@ -979,6 +1057,7 @@ function compactReference(item, index) {
     doi: item.doi || null,
     url: /^https?:\/\//i.test(url) ? url : (item.doi ? `https://doi.org/${item.doi}` : ''),
     abstract: literature.cleanText(item.abstract, 260),
+    top_journal: literature.isTopJournal(item.journal),
   };
 }
 
@@ -991,11 +1070,12 @@ async function gatherLiterature(compounds, constraints, options = {}) {
     ? Number(options.timeout_ms) : LITERATURE_TIMEOUT_MS;
   try {
     const data = await literature.search(query, {
-      limit: LITERATURE_LIMIT,
+      limit: LITERATURE_POOL,
       sort: 'relevance',
       timeout_ms: timeoutMs,
+      top_journals: true,
     });
-    const items = (data.results || [])
+    const items = rankReferences(data.results || [], compounds)
       .slice(0, LITERATURE_LIMIT)
       .map((item, index) => compactReference(item, index + 1));
     return {
@@ -1073,6 +1153,7 @@ async function aiConditions(compounds, constraints, override, literatureContext 
     journal: item.journal,
     year: item.year,
     doi: item.doi,
+    top_journal: Boolean(item.top_journal),
     abstract: item.abstract,
   }));
 
@@ -1091,7 +1172,7 @@ async function aiConditions(compounds, constraints, override, literatureContext 
       status: evidence.status,
       evidence: evidencePayload,
       instruction: evidencePayload.length
-        ? '先核对 evidence 的分离模式/流动相/pH/梯度结论，再用化学性质与分离原理校验；rationale 中引用请标注 [ref]。'
+        ? 'evidence 优先来自分析化学顶级期刊；先核对文献的分离模式/流动相/pH/梯度结论，再用化学性质与分离原理校验；rationale 中引用请标注 [ref]。'
         : '未取得文献证据，请仅基于化学性质与色谱分离原理设计。',
     },
     system: {
@@ -1277,5 +1358,7 @@ module.exports = {
   gatherLiterature,
   sanitizeReferences,
   literatureSummary,
+  compoundSearchTerms,
+  rankReferences,
   recommend,
 };

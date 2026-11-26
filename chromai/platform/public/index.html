@@ -529,7 +529,7 @@
         <section class="card">
           <div class="card-head">
             <div class="head-title"><h2>全球分析科学文献</h2><span class="pill" id="lit-result-count">0</span></div>
-            <span class="hint" id="lit-source-note">Europe PMC · Crossref</span>
+            <span class="hint" id="lit-source-note">Europe PMC · Crossref · OpenAlex</span>
           </div>
           <form class="lit-search-row" id="lit-search-form">
             <div class="search-box">
@@ -541,6 +541,10 @@
               <option value="newest">最新发表</option>
               <option value="cited">高被引</option>
             </select>
+            <label class="lit-top-toggle" title="叠加检索分析化学顶级期刊库">
+              <input type="checkbox" id="lit-top-journals" checked>
+              <span>分析化学顶刊</span>
+            </label>
             <button class="primary-btn small" id="btn-lit-search" type="submit">检索</button>
           </form>
           <div class="library-status" id="lit-status"></div>

@@ -16,7 +16,7 @@
 |-|-|-|
 | 色谱模拟 | 编辑样品组分与方法条件，计算保留时间、分离度、柱压并绘制色谱图 | `POST /api/simulate` |
 | AI 条件设计 | 先按组分与约束检索文献，再结合化学性质与分离原理生成 pH、有机相、色谱柱、流速、波长与梯度程序，附文献依据、设计依据与风险 | `POST /api/recommend` |
-| 文献参考 | 检索 Europe PMC / Crossref，按主题建立监控并扫描新文献 | `/api/literature/*` |
+| 文献参考 | 检索 Europe PMC / Crossref / OpenAlex，并可限定分析化学顶级期刊；按主题建立监控并扫描新文献 | `/api/literature/*` |
 | 化合物检索 | ChemicalBook 四级展示：数据源状态 → 匹配列表 → 化合物档案 → 性质与摘要 | `GET /api/compounds/search` |
 | 界面检测 | 模拟识别仪器界面模块，六项方法参数联合校验，可选上传截图 | `POST /api/interface/detect` |
 
@@ -53,7 +53,7 @@ chromai/platform/
 │   ├── pubchem.js         # PubChem 在线检索与性质估算
 │   ├── chemicalbook.js    # ChemicalBook 检索页/详情页抓取与解析
 │   ├── detector.js        # 界面检测：六参数校验、图片签名、模拟识别
-│   ├── literature.js      # Europe PMC + Crossref 检索与主题扫描
+│   ├── literature.js      # Europe PMC + Crossref + OpenAlex（含分析化学顶刊库）检索与主题扫描
 │   ├── ai-client.js       # OpenAI 兼容接口封装、JSON 提取、连通性测试
 │   ├── auth.js            # 注册/登录/会话/偏好/收藏/文献主题/密码重置
 │   ├── store.js           # FileStore / RedisStore 二选一
@@ -87,7 +87,7 @@ Node HTTP 服务 (server.js)
         │      ├── simulation ──► recommend / identify / detector
         │      ├── chemicalbook ──► www.chemicalbook.com
         │      ├── pubchem     ──► PubChem PUG REST
-        │      ├── literature  ──► Europe PMC / Crossref
+        │      ├── literature  ──► Europe PMC / Crossref / OpenAlex（顶刊库）
         │      └── ai-client   ──► OpenAI 兼容推理服务（可选）
         └── 静态层 public/（/ 与 /static/*）
 ```
@@ -128,7 +128,7 @@ Node HTTP 服务 (server.js)
 | `detector.js` | 界面检测 | 六参数必填/范围、五种路由、图片签名、模块置信度 |
 | `chemicalbook.js` | 参考检索 | 20 s 超时、128 条内存缓存、人机验证识别、四级解析 |
 | `pubchem.js` | 在线检索 | 名称/CAS → 结构字段，缺失的 logP/pKa/λ 采用经验估算 |
-| `literature.js` | 文献 | Europe PMC + Crossref 合并去重；支持超时预算；主题监控记录已见 ID |
+| `literature.js` | 文献 | Europe PMC + Crossref + OpenAlex 合并去重；内置分析化学顶级期刊 ISSN 库；支持超时预算与主题监控 |
 | `ai-client.js` | 模型调用 | 解析 `chat/completions`、提取 JSON、超时与错误封装 |
 | `auth.js` | 账户 | scrypt 密码、7 天会话、偏好、收藏、文献主题、重置码 |
 | `store.js` | 持久化 | Redis 可用则用 Redis，否则写本地 JSON（原子替换） |
@@ -175,7 +175,8 @@ Node HTTP 服务 (server.js)
   → 生成等度或梯度程序
   → 用 simulation 逐候选复核（分离度、峰形、运行时间）
   → 选出最优方案
-  → （可选）按“组分英文名 + 检测器 + 相模式”检索 Europe PMC / Crossref
+  → （可选）按“组分英文名/同义词 + 检测器 + 相模式”检索 Europe PMC / Crossref / OpenAlex
+  → 叠加分析化学顶级期刊库（Anal. Chem.、J. Chromatogr. A/B、ACA、Talanta 等）并按相关度重排
   → LLM 先依据文献结论、再结合化学性质与分离原理给出方案
   → 结构校验 + 引用编号白名单校验 → 再次物理复核
 ```
@@ -212,7 +213,9 @@ PubChem：
 
 ### 7.5 文献（literature.js）
 
-- 并行查询 Europe PMC 与 Crossref，规范化标题、作者、期刊、年份、DOI 并去重。
+- 并行查询 Europe PMC、Crossref 与 OpenAlex，规范化标题、作者、期刊、年份、DOI 并去重；OpenAlex 的反向摘要索引会还原为可读摘要。
+- 内置分析化学顶级期刊 ISSN 库（Analytical Chemistry、J. Chromatogr. A/B、Analytica Chimica Acta、Talanta、JPBA 等），`top_journals=1` 时追加顶刊库查询，结果按“组分命中 + 顶刊 + 时效/被引”重排。
+- 检索式会自动补充常见同义词（如 paracetamol / acetaminophen、vitamin C / ascorbic acid），避免因命名差异漏检。
 - `search` 支持 `timeout_ms`（2–12 s），AI 条件设计使用 8 s 预算，确保文献步骤不会挤占 LLM 的网关时间。
 - 主题监控按用户保存检索式与已见记录 ID；`scan` 只返回新增条目。
 - 上游失败返回 502，不返回伪造记录；AI 条件设计内部检索失败时降级为“仅基于化学性质与分离原理”。
@@ -250,6 +253,8 @@ PubChem：
 | POST | `/api/interface/detect` | 否 | 模拟界面检测 |
 
 错误统一为 `{ "error": { "code", "message", "fields?" } }`；旧接口仍兼容 `{ "detail": "..." }` 形式。
+
+`GET /api/literature/search` 额外支持 `journals=1`，用于叠加分析化学顶级期刊库并返回 `sources.openalex_journals` 状态。
 
 ---
 

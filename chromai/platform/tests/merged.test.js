@@ -237,6 +237,137 @@ test('image signatures are verified from base64 payloads', () => {
   );
 });
 
+test('OpenAlex records expose top-journal metadata and abstracts', () => {
+  const record = {
+    id: 'https://openalex.org/W123',
+    doi: 'https://doi.org/10.1000/top',
+    title: 'Paracetamol assay by reversed-phase HPLC',
+    publication_year: 2024,
+    primary_location: {
+      source: { display_name: 'Journal of Chromatography A', issn: ['0021-9673'], issn_l: '0021-9673' },
+    },
+    authorships: [{ author: { display_name: 'A. Author' } }],
+    cited_by_count: 15,
+    abstract_inverted_index: { A: [0], simple: [1], method: [2] },
+    open_access: { is_oa: true },
+    type: 'article',
+  };
+  const item = literature.fromOpenAlex(record);
+  assert.equal(item.doi, '10.1000/top');
+  assert.equal(item.journal, 'Journal of Chromatography A');
+  assert.equal(item.abstract, 'A simple method');
+  assert.deepEqual(item.issns, ['0021-9673']);
+  assert.equal(literature.isTopJournal(item.journal), true);
+  assert.equal(literature.isTopJournal('Journal of chromatography. A'), true);
+  assert.equal(literature.isTopJournal('Eurasian Journal of Analytical Chemistry'), false);
+  assert.equal(literature.isTopJournal('Unrelated Journal'), false);
+});
+
+test('literature search merges the OpenAlex top-journal database', async () => {
+  const originalFetch = global.fetch;
+  const urls = [];
+  const record = {
+    id: 'https://openalex.org/W456',
+    doi: 'https://doi.org/10.1000/paracetamol',
+    title: 'Paracetamol determination in tablets by HPLC',
+    publication_year: 2023,
+    primary_location: {
+      source: { display_name: 'Journal of Chromatography A', issn: ['0021-9673'], issn_l: '0021-9673' },
+    },
+    authorships: [{ author: { display_name: 'B. Author' } }],
+    cited_by_count: 8,
+    abstract_inverted_index: { Reversed: [0], phase: [1], HPLC: [2] },
+    open_access: { is_oa: false },
+    type: 'article',
+  };
+  global.fetch = async (url) => {
+    urls.push(String(url));
+    if (String(url).includes('api.openalex.org')) {
+      return { ok: true, json: async () => ({ results: [record] }) };
+    }
+    if (String(url).includes('api.crossref.org')) {
+      return {
+        ok: true,
+        json: async () => ({
+          message: {
+            items: [{
+              DOI: '10.1000/crossref-paracetamol',
+              title: ['Paracetamol HPLC assay in tablets'],
+              author: [],
+              issued: { 'date-parts': [[2022]] },
+              'container-title': ['Talanta'],
+              ISSN: ['0039-9140'],
+              'is-referenced-by-count': 4,
+              abstract: '',
+              URL: 'https://doi.org/10.1000/crossref-paracetamol',
+              type: 'journal-article',
+            }],
+          },
+        }),
+      };
+    }
+    return { ok: true, json: async () => ({ resultList: { result: [] } }) };
+  };
+  try {
+    const data = await literature.search('paracetamol HPLC openalex test record', {
+      limit: 6,
+      top_journals: true,
+    });
+    assert.equal(data.sources.openalex, 'ok');
+    assert.equal(data.sources.openalex_journals, 'ok');
+    assert.equal(data.sources.crossref, 'ok');
+    assert.ok(data.results.some((item) => item.title.includes('Paracetamol')));
+    assert.ok(data.results.some((item) => (item.issns || []).includes('0039-9140')));
+    assert.ok(['0021-9673', '0039-9140'].some((issn) => (data.results[0].issns || []).includes(issn)));
+    assert.ok(urls.some((url) => url.includes('primary_location.source.issn')));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('AI literature query includes synonyms and stays within limits', () => {
+  const query = recommend.literatureQuery(
+    models.normalizeCompoundList([COMPOUNDS[0]]),
+    { detector: 'UV', phase: 'reversed' },
+  );
+  assert.match(query, /Acetaminophen/);
+  assert.match(query, /paracetamol/i);
+  assert.match(query, /reversed phase/);
+  assert.ok(query.length <= 160);
+});
+
+test('literature ranking prefers analyte hits in top journals', async () => {
+  const originalSearch = literature.search;
+  let received = null;
+  literature.search = async (query, options) => {
+    received = options;
+    return {
+      results: [
+        {
+          id: 'doi:10.1/caffeine', title: 'HPLC study of caffeine', journal: 'Other Journal',
+          year: 2022, abstract: '', cited_by: 0, sources: ['crossref'],
+        },
+        {
+          id: 'doi:10.1/paracetamol', title: 'Acetaminophen and caffeine assay',
+          journal: 'Journal of Chromatography A', year: 2024, abstract: '', cited_by: 10,
+          issns: ['0021-9673'], sources: ['openalex'],
+        },
+      ],
+      sources: { openalex: 'ok', openalex_journals: 'ok' },
+      errors: [],
+    };
+  };
+  try {
+    const context = await recommend.gatherLiterature(SAMPLE, { detector: 'UV', phase: 'auto' });
+    assert.equal(received.top_journals, true);
+    assert.equal(context.status, 'ok');
+    assert.match(context.items[0].title, /Acetaminophen/);
+    assert.equal(context.items[0].top_journal, true);
+  } finally {
+    literature.search = originalSearch;
+  }
+});
+
 test('AI literature query combines analytes with detector and phase', () => {
   const compounds = models.normalizeCompoundList([
     COMPOUNDS[0], COMPOUNDS[1], COMPOUNDS[2], COMPOUNDS[3],
@@ -333,6 +464,8 @@ test('AI conditions consume literature evidence and return filtered references',
     assert.equal(result.references[0].index, 1);
     assert.equal(result.literature.status, 'ok');
     assert.equal(result.literature.count, 1);
+    assert.ok(result.result.peaks.every((peak) => peak.tr_min !== null));
+    assert.ok(result.result.peaks.some((peak) => peak.visible));
     const payload = JSON.parse(captured[1].content);
     assert.equal(payload.literature.evidence[0].ref, 1);
     assert.match(payload.literature.instruction, /evidence/);
